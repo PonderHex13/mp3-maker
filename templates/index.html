@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MP3 Maker - Music Downloader</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    
+    <style>
+        :root {
+            --bg-primary: #0f0f0f;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #262626;
+            --bg-hover: #3f3f3f;
+            --text-primary: #ffffff;
+            --text-secondary: #aaaaaa;
+            --text-muted: #717171;
+            --accent-primary: #ff0000;
+            --accent-secondary: #cc0000;
+            --success: #00d562;
+            --warning: #ffa000;
+            --error: #ff4444;
+            --border: #333333;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+
+        /* Header */
+        header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-content {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+
+        .logo i {
+            color: var(--accent-primary);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 2rem;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            transition: color 0.2s ease;
+        }
+
+        .nav-links a:hover {
+            color: var(--text-primary);
+        }
+
+        /* Main Content */
+        main {
+            padding: 3rem 0;
+        }
+
+        .hero {
+            text-align: center;
+            margin-bottom: 3rem;
+        }
+
+        .hero h1 {
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, var(--text-primary), var(--text-secondary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero p {
+            font-size: 1.2rem;
+            color: var(--text-secondary);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* Search Section */
+        .search-section {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 20px var(--shadow);
+        }
+
+        .search-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .input-group {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 1rem 1rem 1rem 3rem;
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border);
+            border-radius: 50px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .search-input:focus {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(255, 0, 0, 0.1);
+        }
+
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 1rem;
+            color: var(--text-muted);
+            z-index: 1;
+        }
+
+        .search-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 0.75rem 2rem;
+            background: var(--accent-primary);
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-size: 1rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            text-decoration: none;
+        }
+
+        .btn:hover {
+            background: var(--accent-secondary);
+            transform: translateY(-1px);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-hover);
+            border-color: var(--text-muted);
+        }
+
+        /* File Upload */
+        .file-upload {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--bg-tertiary);
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .file-upload:hover {
+            border-color: var(--accent-primary);
+            background: rgba(255, 0, 0, 0.05);
+        }
+
+        .file-upload.dragover {
+            border-color: var(--accent-primary);
+            background: rgba(255, 0, 0, 0.1);
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        /* Progress Section */
+        .progress-section {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+            display: none;
+        }
+
+        .progress-section.show {
+            display: block;
+        }
+
+        .progress-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .progress-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+
+        .progress-status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .status-queued { background: var(--bg-hover); color: var(--text-secondary); }
+        .status-processing { background: var(--warning); color: white; }
+        .status-completed { background: var(--success); color: white; }
+        .status-error { background: var(--error); color: white; }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .progress-messages {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .progress-message {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .progress-message:last-child {
+            border-bottom: none;
+        }
+
+        .message-icon {
+            color: var(--text-muted);
+        }
+
+        .message-icon.success { color: var(--success); }
+        .message-icon.error { color: var(--error); }
+        .message-icon.warning { color: var(--warning); }
+
+        /* Files Section */
+        .files-section {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            padding: 2rem;
+        }
+
+        .files-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+        }
+
+        .files-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .files-actions {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .files-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+        }
+
+        .file-card {
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            padding: 1.5rem;
+            transition: all 0.2s ease;
+        }
+
+        .file-card:hover {
+            background: var(--bg-hover);
+            transform: translateY(-2px);
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .file-icon {
+            width: 40px;
+            height: 40px;
+            background: var(--accent-primary);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .file-details h3 {
+            font-size: 1rem;
+            font-weight: 500;
+            margin-bottom: 0.25rem;
+            word-break: break-word;
+        }
+
+        .file-meta {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-small {
+            padding: 0.5rem 1rem;
+            font-size: 0.875rem;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-muted);
+        }
+
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+            opacity: 0.5;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+
+            .search-buttons {
+                flex-direction: column;
+            }
+
+            .files-header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .files-actions {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .files-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav-links {
+                display: none;
+            }
+        }
+
+        /* Loading Animation */
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--bg-hover);
+            border-top: 2px solid var(--text-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-tertiary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--bg-hover);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <div class="header-content">
+                <a href="#" class="logo">
+                    <i class="fas fa-music"></i>
+                    MP3 Maker
+                </a>
+                <nav>
+                    <ul class="nav-links">
+                        <li><a href="#search">Download</a></li>
+                        <li><a href="#files">Files</a></li>
+                        <li><a href="#about">About</a></li>
+                    </ul>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="container">
+            <!-- Hero Section -->
+            <section class="hero">
+                <h1>Download Music from YouTube & Spotify</h1>
+                <p>Convert your favorite tracks to high-quality MP3 files with automatic metadata and album art</p>
+            </section>
+
+            <!-- Search Section -->
+            <section class="search-section" id="search">
+                <form class="search-form" id="downloadForm">
+                    <div class="input-group">
+                        <i class="fas fa-search input-icon"></i>
+                        <input 
+                            type="text" 
+                            id="searchInput" 
+                            class="search-input" 
+                            placeholder="Paste YouTube/Spotify URL or search for a song..."
+                            autocomplete="off"
+                        >
+                    </div>
+                    
+                    <div class="search-buttons">
+                        <button type="submit" class="btn" id="downloadBtn">
+                            <i class="fas fa-download"></i>
+                            Download
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="batchBtn">
+                            <i class="fas fa-list"></i>
+                            Batch Upload
+                        </button>
+                    </div>
+
+                    <!-- File Upload Area -->
+                    <div class="file-upload" id="fileUpload">
+                        <input type="file" id="fileInput" class="file-input" accept=".txt,.csv">
+                        <i class="fas fa-cloud-upload-alt" style="font-size: 2rem; color: var(--text-muted); margin-bottom: 0.5rem;"></i>
+                        <p>Drag & drop a text file with URLs/queries, or <strong>click to browse</strong></p>
+                        <small style="color: var(--text-muted);">One URL or search query per line</small>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Progress Section -->
+            <section class="progress-section" id="progressSection">
+                <div class="progress-header">
+                    <h2 class="progress-title">Download Progress</h2>
+                    <span class="progress-status" id="progressStatus">Queued</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-messages" id="progressMessages">
+                    <!-- Progress messages will be added here -->
+                </div>
+            </section>
+
+            <!-- Files Section -->
+            <section class="files-section" id="files">
+                <div class="files-header">
+                    <h2 class="files-title">Downloaded Files</h2>
+                    <div class="files-actions">
+                        <button class="btn btn-secondary" id="refreshBtn">
+                            <i class="fas fa-sync-alt"></i>
+                            Refresh
+                        </button>
+                        <button class="btn btn-secondary" id="downloadAllBtn">
+                            <i class="fas fa-download"></i>
+                            Download All
+                        </button>
+                        <button class="btn" id="clearAllBtn" style="background: var(--error);">
+                            <i class="fas fa-trash"></i>
+                            Clear All
+                        </button>
+                    </div>
+                </div>
+                <div class="files-grid" id="filesGrid">
+                    <!-- Files will be loaded here -->
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <script>
+        // Initialize Socket.IO
+        const socket = io();
+        
+        // Global variables
+        let currentTaskId = null;
+        let files = [];
+        
+        // DOM elements
+        const downloadForm = document.getElementById('downloadForm');
+        const searchInput = document.getElementById('searchInput');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const batchBtn = document.getElementById('batchBtn');
+        const fileUpload = document.getElementById('fileUpload');
+        const fileInput = document.getElementById('fileInput');
+        const progressSection = document.getElementById('progressSection');
+        const progressStatus = document.getElementById('progressStatus');
+        const progressFill = document.getElementById('progressFill');
+        const progressMessages = document.getElementById('progressMessages');
+        const filesGrid = document.getElementById('filesGrid');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const downloadAllBtn = document.getElementById('downloadAllBtn');
+        const clearAllBtn = document.getElementById('clearAllBtn');
+
+        // Event listeners
+        downloadForm.addEventListener('submit', handleDownload);
+        batchBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileUpload);
+        refreshBtn.addEventListener('click', loadFiles);
+        downloadAllBtn.addEventListener('click', downloadAllFiles);
+        clearAllBtn.addEventListener('click', clearAllFiles);
+
+        // File upload drag and drop
+        fileUpload.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            fileUpload.classList.add('dragover');
+        });
+
+        fileUpload.addEventListener('dragleave', () => {
+            fileUpload.classList.remove('dragover');
+        });
+
+        fileUpload.addEventListener('drop', (e) => {
+            e.preventDefault();
+            fileUpload.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleDroppedFile(files[0]);
+            }
+        });
+
+        fileUpload.addEventListener('click', () => fileInput.click());
+
+        // Socket.IO event handlers
+        socket.on('download_progress', (data) => {
+            if (data.task_id === currentTaskId) {
+                updateProgress(data);
+            }
+        });
+
+        // Functions
+        async function handleDownload(e) {
+            e.preventDefault();
+            const input = searchInput.value.trim();
+            
+            if (!input) {
+                alert('Please enter a URL or search query');
+                return;
+            }
+
+            const isUrl = input.startsWith('http');
+            const payload = isUrl ? { url: input } : { query: input };
+
+            try {
+                downloadBtn.disabled = true;
+                downloadBtn.innerHTML = '<div class="spinner"></div> Starting...';
+                
+                const response = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    currentTaskId = result.task_id;
+                    showProgress();
+                    updateProgressStatus('queued');
+                    searchInput.value = '';
+                } else {
+                    throw new Error(result.error);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                downloadBtn.disabled = false;
+                downloadBtn.innerHTML = '<i class="fas fa-download"></i> Download';
+            }
+        }
+
+        async function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if (file) {
+                handleDroppedFile(file);
+            }
+        }
+
+        async function handleDroppedFile(file) {
+            if (!file.type.includes('text')) {
+                alert('Please upload a text file');
+                return;
+            }
+
+            try {
+                const text = await file.text();
+                const urls = text.split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line && !line.startsWith('#'));
+
+                if (urls.length === 0) {
+                    alert('No valid URLs or queries found in file');
+                    return;
+                }
+
+                const response = await fetch('/api/batch_download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ urls })
+                });
+
+                const result = await response.json();
+                
+                if (response.ok) {
+                    currentTaskId = result.task_id;
+                    showProgress();
+                    updateProgressStatus('queued');
+                    addProgressMessage(`Batch download started: ${urls.length} items`, 'info');
+                } else {
+                    throw new Error(result.error);
+                }
+            } catch (error) {
+                alert('Error processing file: ' + error.message);
+            }
+        }
+
+        function updateProgress(data) {
+            const { message, progress, status } = data;
+            
+            updateProgressStatus(status);
+            
+            if (progress !== null && progress !== undefined) {
+                progressFill.style.width = progress + '%';
+            }
+            
+            addProgressMessage(message, status);
+
+            if (status === 'completed') {
+                setTimeout(() => {
+                    loadFiles();
+                    hideProgress();
+                }, 2000);
+            }
+        }
+
+        function updateProgressStatus(status) {
+            progressStatus.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+            progressStatus.className = 'progress-status status-' + status;
+        }
+
+        function addProgressMessage(message, status) {
+            const messageEl = document.createElement('div');
+            messageEl.className = 'progress-message';
+            
+            const icon = getStatusIcon(status);
+            messageEl.innerHTML = `
+                <i class="fas ${icon} message-icon ${status}"></i>
+                <span>${message}</span>
+            `;
+            
+            progressMessages.appendChild(messageEl);
+            progressMessages.scrollTop = progressMessages.scrollHeight;
+        }
+
+        function getStatusIcon(status) {
+            switch (status) {
+                case 'completed': return 'fa-check-circle';
+                case 'error': return 'fa-exclamation-circle';
+                case 'warning': return 'fa-exclamation-triangle';
+                default: return 'fa-info-circle';
+            }
+        }
+
+        function showProgress() {
+            progressSection.classList.add('show');
+            progressMessages.innerHTML = '';
+            progressFill.style.width = '0%';
+        }
+
+        function hideProgress() {
+            progressSection.classList.remove('show');
+            currentTaskId = null;
+        }
+
+        async function loadFiles() {
+            try {
+                const response = await fetch('/api/files');
+                files = await response.json();
+                renderFiles();
+            } catch (error) {
+                console.error('Error loading files:', error);
+            }
+        }
+
+        function renderFiles() {
+            if (files.length === 0) {
+                filesGrid.innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <i class="fas fa-music"></i>
+                        <h3>No files yet</h3>
+                        <p>Download some music to see your files here</p>
+                    </div>
+                `;
+                return;
+            }
+
+            filesGrid.innerHTML = files.map(file => `
+                <div class="file-card">
+                    <div class="file-info">
+                        <div class="file-icon">
+                            <i class="fas fa-music"></i>
+                        </div>
+                        <div class="file-details">
+                            <h3>${file.name}</h3>
+                            <div class="file-meta">
+                                ${formatFileSize(file.size)} • ${formatDate(file.created_at)}
+                            </div>
+                        </div>
+                    </div>
+                    <div class="file-actions">
+                        <a href="/api/download_file/${encodeURIComponent(file.name)}" 
+                           class="btn btn-secondary btn-small">
+                            <i class="fas fa-download"></i>
+                            Download
+                        </a>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function downloadAllFiles() {
+            if (files.length === 0) {
+                alert('No files to download');
+                return;
+            }
+            
+            window.open('/api/download_all', '_blank');
+        }
+
+        async function clearAllFiles() {
+            if (!confirm('Are you sure you want to delete all downloaded files?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/clear_files', { method: 'POST' });
+                const result = await response.json();
+                
+                if (response.ok) {
+                    loadFiles();
+                    alert(`Deleted ${result.deleted_count} files`);
+                } else {
+                    throw new Error('Failed to clear files');
+                }
+            } catch (error) {
+                alert('Error clearing files: ' + error.message);
+            }
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatDate(dateString) {
+            return new Date(dateString).toLocaleDateString();
+        }
+
+        // Initialize
+        loadFiles();
+    </script>
+</body>
+</html>
