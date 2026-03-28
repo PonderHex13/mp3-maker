@@ -169,7 +169,7 @@ class MusicDownloader:
             # Download and add album art if available
             if metadata.get('image_url'):
                 try:
-                    response = requests.get(metadata['image_url'])
+                    response = requests.get(metadata['image_url'], timeout=10)
                     if response.status_code == 200:
                         audio['APIC'] = APIC(
                             encoding=3,
@@ -193,39 +193,46 @@ class MusicDownloader:
             spotify_info = self.extract_spotify_info(url)
             if not spotify_info:
                 print(f"{Fore.RED}Could not extract Spotify information{Style.RESET_ALL}")
-                return
+                return None
             
             if spotify_info['type'] == 'track':
                 # Search for the track on YouTube
                 query = f"{spotify_info['artist']} {spotify_info['name']}"
                 youtube_url = self.search_youtube(query)
                 if youtube_url:
-                    self.download_from_youtube(youtube_url, spotify_info)
+                    return self.download_from_youtube(youtube_url, spotify_info)
                 else:
                     print(f"{Fore.RED}Could not find YouTube video for: {query}{Style.RESET_ALL}")
+                    return None
             
             elif spotify_info['type'] == 'playlist':
                 print(f"{Fore.CYAN}Processing playlist: {spotify_info['name']}{Style.RESET_ALL}")
+                downloaded_files = []
                 for track in spotify_info['tracks']:
                     query = f"{track['artist']} {track['name']}"
                     youtube_url = self.search_youtube(query)
                     if youtube_url:
-                        self.download_from_youtube(youtube_url, track)
+                        downloaded_file = self.download_from_youtube(youtube_url, track)
+                        if downloaded_file:
+                            downloaded_files.append(downloaded_file)
                     else:
                         print(f"{Fore.RED}Could not find YouTube video for: {query}{Style.RESET_ALL}")
+                return downloaded_files
         
         elif 'youtube.com' in url or 'youtu.be' in url:
-            self.download_from_youtube(url)
+            return self.download_from_youtube(url)
         else:
             print(f"{Fore.RED}Unsupported URL: {url}{Style.RESET_ALL}")
+            return None
 
     def process_search_query(self, query: str):
         """Process a search query"""
         youtube_url = self.search_youtube(query)
         if youtube_url:
-            self.download_from_youtube(youtube_url)
+            return self.download_from_youtube(youtube_url)
         else:
             print(f"{Fore.RED}Could not find YouTube video for: {query}{Style.RESET_ALL}")
+            return None
 
 
 @click.command()

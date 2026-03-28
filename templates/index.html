@@ -84,22 +84,6 @@
             color: var(--accent-primary);
         }
 
-        .nav-links {
-            display: flex;
-            gap: 2rem;
-            list-style: none;
-        }
-
-        .nav-links a {
-            color: var(--text-secondary);
-            text-decoration: none;
-            transition: color 0.2s ease;
-        }
-
-        .nav-links a:hover {
-            color: var(--text-primary);
-        }
-
         /* Main Content */
         main {
             padding: 3rem 0;
@@ -142,38 +126,35 @@
             gap: 1rem;
         }
 
-        .input-group {
-            position: relative;
+        .output-settings {
             display: flex;
+            gap: 0.75rem;
             align-items: center;
+            flex-wrap: wrap;
         }
 
-        .search-input {
-            width: 100%;
-            padding: 1rem 1rem 1rem 3rem;
+        .output-input {
+            flex: 1 1 360px;
+            min-width: 260px;
+            padding: 0.8rem 1rem;
             background: var(--bg-tertiary);
             border: 2px solid var(--border);
-            border-radius: 50px;
+            border-radius: 12px;
             color: var(--text-primary);
-            font-size: 1rem;
+            font-size: 0.95rem;
             outline: none;
             transition: all 0.2s ease;
         }
 
-        .search-input:focus {
+        .output-input:focus {
             border-color: var(--accent-primary);
             box-shadow: 0 0 0 3px rgba(255, 0, 0, 0.1);
         }
 
-        .search-input::placeholder {
+        .output-status {
             color: var(--text-muted);
-        }
-
-        .input-icon {
-            position: absolute;
-            left: 1rem;
-            color: var(--text-muted);
-            z-index: 1;
+            font-size: 0.85rem;
+            text-align: center;
         }
 
         .search-buttons {
@@ -181,6 +162,37 @@
             gap: 1rem;
             justify-content: center;
             flex-wrap: wrap;
+        }
+
+        .entry-textarea {
+            width: 100%;
+            min-height: 240px;
+            padding: 1rem 1.25rem;
+            background: var(--bg-tertiary);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            font-family: inherit;
+            outline: none;
+            resize: vertical;
+            transition: all 0.2s ease;
+        }
+
+        .entry-textarea:focus {
+            border-color: var(--accent-primary);
+            box-shadow: 0 0 0 3px rgba(255, 0, 0, 0.1);
+        }
+
+        .entry-textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .entry-note {
+            margin-top: 0.6rem;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            text-align: center;
         }
 
         .btn {
@@ -218,32 +230,6 @@
         .btn-secondary:hover {
             background: var(--bg-hover);
             border-color: var(--text-muted);
-        }
-
-        /* File Upload */
-        .file-upload {
-            margin-top: 1rem;
-            padding: 1rem;
-            background: var(--bg-tertiary);
-            border: 2px dashed var(--border);
-            border-radius: 8px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-
-        .file-upload:hover {
-            border-color: var(--accent-primary);
-            background: rgba(255, 0, 0, 0.05);
-        }
-
-        .file-upload.dragover {
-            border-color: var(--accent-primary);
-            background: rgba(255, 0, 0, 0.1);
-        }
-
-        .file-input {
-            display: none;
         }
 
         /* Progress Section */
@@ -433,6 +419,11 @@
                 flex-direction: column;
             }
 
+            .output-settings {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
             .files-header {
                 flex-direction: column;
                 gap: 1rem;
@@ -445,10 +436,6 @@
 
             .files-grid {
                 grid-template-columns: 1fr;
-            }
-
-            .nav-links {
-                display: none;
             }
         }
 
@@ -494,13 +481,6 @@
                     <i class="fas fa-music"></i>
                     MP3 Maker
                 </a>
-                <nav>
-                    <ul class="nav-links">
-                        <li><a href="#search">Download</a></li>
-                        <li><a href="#files">Files</a></li>
-                        <li><a href="#about">About</a></li>
-                    </ul>
-                </nav>
             </div>
         </div>
     </header>
@@ -509,41 +489,39 @@
         <div class="container">
             <!-- Hero Section -->
             <section class="hero">
-                <h1>Download Music from YouTube & Spotify</h1>
-                <p>Convert your favorite tracks to high-quality MP3 files with automatic metadata and album art</p>
+                <h1>MP3 Maker</h1>
+                <p>Paste one item or a short list.</p>
             </section>
 
             <!-- Search Section -->
             <section class="search-section" id="search">
                 <form class="search-form" id="downloadForm">
-                    <div class="input-group">
-                        <i class="fas fa-search input-icon"></i>
-                        <input 
-                            type="text" 
-                            id="searchInput" 
-                            class="search-input" 
-                            placeholder="Paste YouTube/Spotify URL or search for a song..."
+                    <div class="output-settings">
+                        <input
+                            id="outputDirInput"
+                            class="output-input"
+                            placeholder="Output folder path (absolute), e.g. /app/output or C:\\Music\\MP3"
                             autocomplete="off"
                         >
+                        <button type="button" class="btn btn-secondary" id="saveOutputDirBtn">
+                            <i class="fas fa-folder-open"></i>
+                            Save Folder
+                        </button>
                     </div>
-                    
+                    <div class="output-status" id="outputStatus">Output folder not loaded yet</div>
+
+                    <textarea
+                        id="entriesInput"
+                        class="entry-textarea"
+                        placeholder="Paste one entry per line...&#10;Author - Title&#10;https://youtube.com/...&#10;https://open.spotify.com/..."
+                    ></textarea>
+                    <div class="entry-note">Accepted: Author - Title, YouTube link, Spotify link (single item or list)</div>
+
                     <div class="search-buttons">
                         <button type="submit" class="btn" id="downloadBtn">
                             <i class="fas fa-download"></i>
-                            Download
+                            Start
                         </button>
-                        <button type="button" class="btn btn-secondary" id="batchBtn">
-                            <i class="fas fa-list"></i>
-                            Batch Upload
-                        </button>
-                    </div>
-
-                    <!-- File Upload Area -->
-                    <div class="file-upload" id="fileUpload">
-                        <input type="file" id="fileInput" class="file-input" accept=".txt,.csv">
-                        <i class="fas fa-cloud-upload-alt" style="font-size: 2rem; color: var(--text-muted); margin-bottom: 0.5rem;"></i>
-                        <p>Drag & drop a text file with URLs/queries, or <strong>click to browse</strong></p>
-                        <small style="color: var(--text-muted);">One URL or search query per line</small>
                     </div>
                 </form>
             </section>
@@ -598,11 +576,11 @@
         
         // DOM elements
         const downloadForm = document.getElementById('downloadForm');
-        const searchInput = document.getElementById('searchInput');
+        const entriesInput = document.getElementById('entriesInput');
+        const outputDirInput = document.getElementById('outputDirInput');
+        const saveOutputDirBtn = document.getElementById('saveOutputDirBtn');
+        const outputStatus = document.getElementById('outputStatus');
         const downloadBtn = document.getElementById('downloadBtn');
-        const batchBtn = document.getElementById('batchBtn');
-        const fileUpload = document.getElementById('fileUpload');
-        const fileInput = document.getElementById('fileInput');
         const progressSection = document.getElementById('progressSection');
         const progressStatus = document.getElementById('progressStatus');
         const progressFill = document.getElementById('progressFill');
@@ -614,32 +592,10 @@
 
         // Event listeners
         downloadForm.addEventListener('submit', handleDownload);
-        batchBtn.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', handleFileUpload);
+        saveOutputDirBtn.addEventListener('click', saveOutputDirectory);
         refreshBtn.addEventListener('click', loadFiles);
         downloadAllBtn.addEventListener('click', downloadAllFiles);
         clearAllBtn.addEventListener('click', clearAllFiles);
-
-        // File upload drag and drop
-        fileUpload.addEventListener('dragover', (e) => {
-            e.preventDefault();
-            fileUpload.classList.add('dragover');
-        });
-
-        fileUpload.addEventListener('dragleave', () => {
-            fileUpload.classList.remove('dragover');
-        });
-
-        fileUpload.addEventListener('drop', (e) => {
-            e.preventDefault();
-            fileUpload.classList.remove('dragover');
-            const files = e.dataTransfer.files;
-            if (files.length > 0) {
-                handleDroppedFile(files[0]);
-            }
-        });
-
-        fileUpload.addEventListener('click', () => fileInput.click());
 
         // Socket.IO event handlers
         socket.on('download_progress', (data) => {
@@ -651,19 +607,21 @@
         // Functions
         async function handleDownload(e) {
             e.preventDefault();
-            const input = searchInput.value.trim();
-            
-            if (!input) {
-                alert('Please enter a URL or search query');
+            const payload = buildPayload();
+
+            if (!payload) {
+                alert('Please add at least one entry');
                 return;
             }
 
-            const isUrl = input.startsWith('http');
-            const payload = isUrl ? { url: input } : { query: input };
+            const outputDir = outputDirInput.value.trim();
+            if (outputDir) {
+                payload.output_dir = outputDir;
+            }
 
             try {
                 downloadBtn.disabled = true;
-                downloadBtn.innerHTML = '<div class="spinner"></div> Starting...';
+                downloadBtn.innerHTML = '<div class="spinner"></div> Start';
                 
                 const response = await fetch('/api/download', {
                     method: 'POST',
@@ -677,7 +635,7 @@
                     currentTaskId = result.task_id;
                     showProgress();
                     updateProgressStatus('queued');
-                    searchInput.value = '';
+                    clearEntriesInput();
                 } else {
                     throw new Error(result.error);
                 }
@@ -685,52 +643,65 @@
                 alert('Error: ' + error.message);
             } finally {
                 downloadBtn.disabled = false;
-                downloadBtn.innerHTML = '<i class="fas fa-download"></i> Download';
+                downloadBtn.innerHTML = '<i class="fas fa-download"></i> Start';
             }
         }
 
-        async function handleFileUpload(e) {
-            const file = e.target.files[0];
-            if (file) {
-                handleDroppedFile(file);
+        function buildPayload() {
+            const entries = entriesInput.value
+                .split(/\r?\n/)
+                .map((line) => line.trim())
+                .filter(Boolean);
+
+            return entries.length ? { entries } : null;
+        }
+
+        function clearEntriesInput() {
+            entriesInput.value = '';
+        }
+
+        async function loadOutputDirectory() {
+            try {
+                const response = await fetch('/api/settings/output_dir');
+                const result = await response.json();
+                if (!response.ok) {
+                    throw new Error(result.error || 'Failed to load output directory');
+                }
+
+                outputDirInput.value = result.output_dir || '';
+                outputStatus.textContent = `Current output folder: ${result.output_dir}`;
+            } catch (error) {
+                outputStatus.textContent = `Output folder error: ${error.message}`;
             }
         }
 
-        async function handleDroppedFile(file) {
-            if (!file.type.includes('text')) {
-                alert('Please upload a text file');
+        async function saveOutputDirectory() {
+            const outputDir = outputDirInput.value.trim();
+            if (!outputDir) {
+                alert('Please enter an output folder path');
                 return;
             }
 
             try {
-                const text = await file.text();
-                const urls = text.split('\n')
-                    .map(line => line.trim())
-                    .filter(line => line && !line.startsWith('#'));
-
-                if (urls.length === 0) {
-                    alert('No valid URLs or queries found in file');
-                    return;
-                }
-
-                const response = await fetch('/api/batch_download', {
+                saveOutputDirBtn.disabled = true;
+                const response = await fetch('/api/settings/output_dir', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ urls })
+                    body: JSON.stringify({ output_dir: outputDir })
                 });
-
                 const result = await response.json();
-                
-                if (response.ok) {
-                    currentTaskId = result.task_id;
-                    showProgress();
-                    updateProgressStatus('queued');
-                    addProgressMessage(`Batch download started: ${urls.length} items`, 'info');
-                } else {
-                    throw new Error(result.error);
+
+                if (!response.ok) {
+                    throw new Error(result.error || 'Failed to save output folder');
                 }
+
+                outputDirInput.value = result.output_dir;
+                outputStatus.textContent = `Current output folder: ${result.output_dir}`;
+                loadFiles();
             } catch (error) {
-                alert('Error processing file: ' + error.message);
+                alert('Error saving output folder: ' + error.message);
+            } finally {
+                saveOutputDirBtn.disabled = false;
             }
         }
 
@@ -750,6 +721,12 @@
                     loadFiles();
                     hideProgress();
                 }, 2000);
+                return;
+            }
+
+            if (status === 'error') {
+                downloadBtn.disabled = false;
+                downloadBtn.innerHTML = '<i class="fas fa-download"></i> Start';
             }
         }
 
@@ -880,6 +857,7 @@
         }
 
         // Initialize
+        loadOutputDirectory();
         loadFiles();
     </script>
 </body>

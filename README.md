@@ -4,10 +4,10 @@ A Docker-based tool with both **Web Interface** and **Command Line** support to 
 
 ## Features
 
-- � **Modern Web Interface**: Dark-themed UI similar to YouTube/Google with real-time progress
+- **Modern Web Interface**: Dark-themed UI with real-time progress
 - �🎬 **YouTube Downloads**: Download audio from YouTube videos and playlists
 - 🎧 **Spotify Integration**: Extract track metadata from Spotify URLs (requires API credentials)
-- 📋 **Batch Processing**: Process multiple URLs or search queries from a file
+- 📋 **Multi-line Paste**: Process several entries at once
 - 🎵 **High-Quality MP3**: Convert to MP3 with customizable quality settings
 - 🏷️ **Metadata Tagging**: Automatic ID3 tag addition with artist, album, year, and album art
 - 🐳 **Docker Container**: Easy deployment and consistent environment
@@ -36,11 +36,11 @@ http://localhost:5000
 ```
 
 The web interface provides:
-- **Search & Download**: Paste URLs or search queries
-- **Drag & Drop**: Upload text files with multiple URLs
+- **Single**: Paste one URL or author/title
+- **Multi**: Paste one entry per line
 - **Real-time Progress**: Live download status and progress bars
 - **File Management**: Browse, download, and manage your MP3 collection
-- **Batch Operations**: Download all files as ZIP or clear storage
+- **Bulk Actions**: Download all files as ZIP or clear storage
 
 ### 3. Command Line Interface
 
@@ -72,15 +72,10 @@ docker-compose run --rm mp3-maker-cli python mp3_maker.py -f /app/input/playlist
 
 ## Web Interface Features
 
-### 🎯 Main Search
-- **URL Support**: YouTube videos, playlists, Spotify tracks, and playlists
-- **Search Queries**: Natural language search for any song
-- **Auto-detection**: Automatically detects URL vs search query
-
-### 📁 Batch Upload
-- **Drag & Drop**: Drop text files directly onto the interface
-- **File Browser**: Click to select files from your computer
-- **Format Support**: Plain text files with one URL/query per line
+### 🎯 Main Input
+- **Single**: YouTube URL, Spotify URL, or author - title
+- **Multi**: One entry per line
+- **Auto-detection**: URLs go straight to the source, text becomes a search
 
 ### 📊 Real-time Progress
 - **Live Updates**: Real-time progress bars and status messages
@@ -97,8 +92,7 @@ docker-compose run --rm mp3-maker-cli python mp3_maker.py -f /app/input/playlist
 
 The web interface exposes a REST API:
 
-- `POST /api/download` - Start single download
-- `POST /api/batch_download` - Start batch download
+- `POST /api/download` - Start a single or multi-entry download
 - `GET /api/files` - List downloaded files
 - `GET /api/download_file/<filename>` - Download specific file
 - `GET /api/download_all` - Download all files as ZIP
@@ -129,8 +123,8 @@ To use Spotify features:
 - Simple text: `"Artist Name - Song Title"`
 - Natural language: `"Never Gonna Give You Up by Rick Astley"`
 
-### Batch File Format
-Create a text file with one URL or search query per line:
+### Multi-line Paste
+Paste one item per line:
 ```
 https://www.youtube.com/watch?v=dQw4w9WgXcQ
 Rick Astley - Never Gonna Give You Up
@@ -186,8 +180,7 @@ mp3-maker/
 
 ### Main Interface
 - Dark theme similar to YouTube
-- Clean search interface with URL/query input
-- Drag & drop file upload area
+- Clean search interface with single and multi-line input
 
 ### Download Progress
 - Real-time progress bars
@@ -279,8 +272,8 @@ To use Spotify features:
 - Simple text: `"Artist Name - Song Title"`
 - Natural language: `"Never Gonna Give You Up by Rick Astley"`
 
-### Batch File Format
-Create a text file with one URL or search query per line:
+### Multi-line Paste
+Paste one item per line:
 ```
 https://www.youtube.com/watch?v=dQw4w9WgXcQ
 Rick Astley - Never Gonna Give You Up
