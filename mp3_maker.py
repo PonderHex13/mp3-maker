@@ -191,7 +191,7 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
             {
                 "key": "FFmpegExtractAudio",   # Use ffmpeg to extract audio
                 "preferredcodec": "mp3",        # Convert to MP3 format
-                "preferredquality": "192",      # 192 kbps (good quality, reasonable size)
+                "preferredquality": "256",      # 256 kbps (good quality, reasonable size)
             }
         ],
 
@@ -244,6 +244,49 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
         "Download seemed to succeed but the output MP3 file was not found. "
         "Make sure ffmpeg is installed and in your PATH."
     )
+
+
+def download_title_as_mp3(name: str, author: str, output_dir: str = "output") -> str:
+    """
+    Search YouTube for a track using `author` and `name`, take the top result,
+    and download it using `download_youtube_as_mp3`.
+
+    This reuses the existing download function as a template so behaviour
+    (ffmpeg detection, postprocessor hooks, output naming) stays consistent.
+    """
+    query = f"{author} {name}"
+    print(f"Searching YouTube for: {query}")
+
+    # Use yt-dlp's "ytsearch1:" to fetch the best match without downloading
+    ydl_opts = {"quiet": True}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        search_spec = f"ytsearch1:{query}"
+        info = ydl.extract_info(search_spec, download=False)
+
+    # extract_info may return a dict with 'entries' or a single entry
+    entry = None
+    if isinstance(info, dict):
+        entries = info.get("entries")
+        if entries:
+            entry = entries[0]
+        else:
+            entry = info
+    else:
+        entry = info
+
+    if not entry:
+        raise FileNotFoundError(f"No YouTube results for query: {query}")
+
+    # Determine a usable video URL from the search result
+    video_url = entry.get("webpage_url") or entry.get("url")
+    if not video_url and entry.get("id"):
+        video_url = f"https://www.youtube.com/watch?v={entry.get('id')}"
+
+    if not video_url:
+        raise FileNotFoundError("Could not determine video URL from search result")
+
+    # Reuse the existing download function for consistent behaviour
+    return download_youtube_as_mp3(video_url, output_dir)
 
 # ============================================================================
 # SMART DOWNLOAD — picks the right function based on URL
@@ -309,8 +352,18 @@ Examples:
     parser.add_argument(
         "--url",
         type=str,
-        required=True,
+        required=False,
         help="YouTube or Spotify URL to download and convert to MP3",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        help="Song name to search for (requires --author)",
+    )
+    parser.add_argument(
+        "--author",
+        type=str,
+        help="Author/artist name to search for (requires --name)",
     )
     parser.add_argument(
         "--output",
@@ -322,13 +375,27 @@ Examples:
     # Parse the arguments from the command line
     args = parser.parse_args()
 
-    # --- Run the download ---
-    # Use the smart download function that auto-detects the URL type
+    # --- Run the download or search ---
+    # Support two modes:
+    #  1) Provide --url to download a specific video/track
+    #  2) Provide both --name and --author to search YouTube and download the top result
+    if (args.name or args.author) and args.url:
+        parser.error("Provide either --url OR --name/--author, not both")
+    if (args.name and not args.author) or (args.author and not args.name):
+        parser.error("--name and --author must be provided together")
+
     try:
-        result_path = download_as_mp3(
-            url=args.url,
-            output_dir=args.output,
-        )
+        if args.name and args.author:
+            # Search mode
+            result_path = download_title_as_mp3(
+                name=args.name, author=args.author, output_dir=args.output
+            )
+        elif args.url:
+            # URL mode (existing behaviour)
+            result_path = download_as_mp3(url=args.url, output_dir=args.output)
+        else:
+            parser.error("Either --url or both --name and --author must be provided")
+
         print(f"\nDone! Your MP3 is at: {result_path}")
 
     except Exception as e:
