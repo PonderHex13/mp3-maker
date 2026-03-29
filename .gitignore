@@ -1,44 +1,21 @@
-# Logs
-*.log
+# Ignore downloaded MP3 files
+output/
 
-# Environment variables
-.env
+# Bundled ffmpeg binaries (large, don't commit)
+ffmpeg/
+
+# Python virtual environment
+venv/
+.venv/
 
 # Python cache
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Output files
-output/
-downloads/
 
 # IDE
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# OS
-.DS_Store
+# OS files
 Thumbs.db
-
-# Docker
-.dockerignore
+.DS_Store
