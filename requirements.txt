@@ -3,7 +3,6 @@
 # It also handles the ffmpeg conversion to MP3 for us
 yt-dlp>=2024.1.0
 
-# === Step 2: Spotify to MP3 ===
-# spotdl — downloads Spotify tracks by finding them on YouTube Music
-# Ships with built-in Spotify API credentials (no login needed)
-spotdl>=4.2.0
+# API (quick, file-queue option)
+fastapi>=0.95.0
+uvicorn[standard]>=0.22.0
