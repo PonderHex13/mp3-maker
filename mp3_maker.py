@@ -35,6 +35,7 @@ import glob
 # 'yt_dlp' is the YouTube downloader library
 # It can download video/audio from YouTube and hundreds of other sites
 import yt_dlp
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ============================================================================
@@ -287,12 +288,91 @@ def download_title_as_mp3(name: str, author: str, output_dir: str = "output") ->
 
     # Reuse the existing download function for consistent behaviour
     return download_youtube_as_mp3(video_url, output_dir)
+def process_batch_entries(entries: list, output_dir: str = "output", concurrency: int = 4) -> list:
+    """
+    Process inline batch entries (list of strings) in parallel (strict mode):
+      - Accepts URLs starting with http(s) (only supported link types)
+      - Accepts 'Author - Title' (or using '|' or ',')
+      - Any other line is treated as an error (no free-form search)
+
+    Runs up to `concurrency` workers using threads. Returns list of dicts:
+    {input, status, path?, error?}
+    """
+
+    # Build a flat list of entry lines (split multi-line args)
+    lines = []
+    for raw in entries:
+        if isinstance(raw, str) and "\n" in raw:
+            parts = [l for l in raw.splitlines() if l.strip()]
+            lines.extend(parts)
+        else:
+            lines.append(raw)
+
+    def process_single_line(entry_line: str) -> dict:
+        entry_line = entry_line.strip()
+        res = {"input": entry_line}
+        if not entry_line or entry_line.startswith("#"):
+            res.update({"status": "error", "error": "empty or comment"})
+            return res
+
+        print(f"\nProcessing: {entry_line}")
+
+        try:
+            # URL entry (or recognizable URL-type)
+            if entry_line.lower().startswith("http") or detect_url_type(entry_line) != "unknown":
+                url_type = detect_url_type(entry_line)
+                if url_type == "spotify":
+                    raise FileNotFoundError("Spotify URLs are not supported in this branch")
+                if url_type == "unknown":
+                    raise FileNotFoundError("Unknown URL type")
+
+                path = download_link_as_mp3(entry_line, output_dir)
+                res.update({"status": "ok", "path": path})
+
+            else:
+                # Try common separators assuming "Author - Title"
+                parsed = None
+                for sep in [" - ", "|", ","]:
+                    if sep in entry_line:
+                        parts2 = [p.strip() for p in entry_line.split(sep, 1)]
+                        if len(parts2) == 2:
+                            author, name = parts2[0], parts2[1]
+                            parsed = (name, author)
+                            break
+
+                if parsed:
+                    name, author = parsed
+                    path = download_title_as_mp3(name=name, author=author, output_dir=output_dir)
+                    res.update({"status": "ok", "path": path})
+                else:
+                    raise ValueError("Entry is not a URL or 'Author - Title' format (strict batch mode)")
+
+        except Exception as e:
+            print(f"  Error processing entry: {e}")
+            res.update({"status": "error", "error": str(e)})
+
+        return res
+
+    results = []
+    # Run workers in a thread pool
+    max_workers = max(1, concurrency)
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(process_single_line, ln): ln for ln in lines}
+        for fut in as_completed(futures):
+            try:
+                res = fut.result()
+            except Exception as e:
+                ln = futures.get(fut)
+                res = {"input": ln, "status": "error", "error": str(e)}
+            results.append(res)
+
+    return results
 
 # ============================================================================
 # SMART DOWNLOAD — picks the right function based on URL
 # ============================================================================
 
-def download_as_mp3(url: str, output_dir: str = "output") -> str:
+def download_link_as_mp3(url: str, output_dir: str = "output") -> str:
     """
     Download from any supported URL and convert to MP3.
 
@@ -371,6 +451,17 @@ Examples:
         default="output",
         help="Output directory for MP3 files (default: output)",
     )
+    parser.add_argument(
+        "--batch",
+        nargs='+',
+        help="Provide one or more batch entries inline (URLs or 'Author - Title')",
+    )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="Number of concurrent workers for batch processing (default: 4)",
+    )
 
     # Parse the arguments from the command line
     args = parser.parse_args()
@@ -381,22 +472,35 @@ Examples:
     #  2) Provide both --name and --author to search YouTube and download the top result
     if (args.name or args.author) and args.url:
         parser.error("Provide either --url OR --name/--author, not both")
+    if args.batch and (args.url or args.name or args.author):
+        parser.error("--batch cannot be combined with --url or --name/--author")
     if (args.name and not args.author) or (args.author and not args.name):
         parser.error("--name and --author must be provided together")
 
     try:
-        if args.name and args.author:
+        if args.batch:
+            summary = process_batch_entries(args.batch, output_dir=args.output, concurrency=args.concurrency)
+            ok = sum(1 for r in summary if r.get("status") == "ok")
+            fail = len(summary) - ok
+            print(f"\nBatch finished: {ok} succeeded, {fail} failed.")
+            # Print brief details
+            for r in summary:
+                if r.get("status") == "ok":
+                    print(f"  OK: {r.get('input')} -> {r.get('path')}")
+                else:
+                    print(f"  ERR: {r.get('input')} -> {r.get('error')}")
+        elif args.name and args.author:
             # Search mode
             result_path = download_title_as_mp3(
                 name=args.name, author=args.author, output_dir=args.output
             )
+            print(f"\nDone! Your MP3 is at: {result_path}")
         elif args.url:
             # URL mode (existing behaviour)
-            result_path = download_as_mp3(url=args.url, output_dir=args.output)
+            result_path = download_link_as_mp3(url=args.url, output_dir=args.output)
+            print(f"\nDone! Your MP3 is at: {result_path}")
         else:
-            parser.error("Either --url or both --name and --author must be provided")
-
-        print(f"\nDone! Your MP3 is at: {result_path}")
+            parser.error("Either --url, --batch, or both --name and --author must be provided")
 
     except Exception as e:
         # Catch any error and show a friendly message
