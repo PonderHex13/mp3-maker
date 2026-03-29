@@ -26,6 +26,9 @@ import argparse
 # 'subprocess' lets us run external commands (like spotdl) from Python
 import subprocess
 
+# allow clean process exit when encountering unsupported URLs
+import sys
+
 # 'glob' helps us find files matching a pattern (e.g. all .mp3 files)
 import glob
 
@@ -198,6 +201,9 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
         "postprocessor_hooks": [postprocessor_hook],
 
         # --- Misc options ---
+        # By default don't download entire playlists unless explicitly requested
+        # This avoids accidentally downloading hundreds of files from a 'list' URL
+        "noplaylist": True,
         "quiet": False,         # Show yt-dlp's own output
         "no_warnings": False,   # Show warnings (helpful for debugging)
     }
@@ -239,111 +245,6 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
         "Make sure ffmpeg is installed and in your PATH."
     )
 
-
-# ============================================================================
-# === STEP 2: Spotify to MP3 ===
-# ============================================================================
-# Spotify doesn't allow direct audio downloads.
-# Instead, we use 'spotdl' which:
-#   1. Reads track metadata from Spotify's public API (no login needed)
-#   2. Searches YouTube Music for the matching song
-#   3. Downloads from YouTube using yt-dlp
-#   4. Converts to MP3 using ffmpeg
-#
-# We call spotdl as a command-line tool (subprocess) rather than its Python API
-# because its Python API requires Spotify client credentials, but the CLI
-# ships with built-in default credentials — no login needed!
-
-def download_spotify_as_mp3(url: str, output_dir: str = "output") -> str:
-    """
-    Download a Spotify track/album/playlist and convert to MP3.
-
-    How it works:
-    1. We call 'spotdl' as an external command
-    2. spotdl reads the Spotify URL to get song name + artist
-    3. spotdl finds the song on YouTube Music
-    4. spotdl downloads and converts to MP3 using yt-dlp + ffmpeg
-
-    Args:
-        url:        Spotify URL (track, album, or playlist)
-        output_dir: Folder where MP3s will be saved (default: "output")
-
-    Returns:
-        The path to the output directory (may contain multiple files for albums/playlists).
-
-    Raises:
-        RuntimeError: If spotdl fails.
-    """
-
-    # Create output directory if needed
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Snapshot existing .mp3 files BEFORE download so we can detect new ones
-    existing_mp3s = set(glob.glob(os.path.join(output_dir, "*.mp3")))
-
-    # Build the spotdl command
-    # 'spotdl download <url>' is the basic command
-    cmd = [
-        "spotdl",
-        "download",
-        url,
-        # --output: where to save files. The template uses spotdl's format variables:
-        #   {artists} = artist name(s)
-        #   {title}   = song title
-        #   {output-ext} = file extension (mp3)
-        "--output", os.path.join(output_dir, "{artists} - {title}.{output-ext}"),
-        # --format: output audio format
-        "--format", "mp3",
-        # --bitrate: audio quality (matches our YouTube default)
-        "--bitrate", "192k",
-    ]
-
-    # If we have a bundled ffmpeg, tell spotdl where to find it
-    ffmpeg_path = _get_ffmpeg_location()
-    if ffmpeg_path:
-        ffmpeg_exe = os.path.join(ffmpeg_path, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
-        cmd.extend(["--ffmpeg", ffmpeg_exe])
-        print(f"  Using bundled ffmpeg from: {ffmpeg_path}")
-    else:
-        print("  Using system ffmpeg (make sure it's in your PATH)")
-
-    # Run the spotdl command
-    # subprocess.run() executes the command and waits for it to finish
-    print(f"Starting Spotify download: {url}")
-    print(f"  Running: {' '.join(cmd)}")
-
-    result = subprocess.run(
-        cmd,
-        # capture_output=True captures stdout and stderr so we can check them
-        capture_output=False,
-        # text=True means output is returned as strings (not bytes)
-        text=True,
-    )
-
-    # Check if spotdl succeeded (return code 0 = success)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"spotdl failed with exit code {result.returncode}. "
-            f"Is the Spotify URL valid? Is the track available?"
-        )
-
-    # Find which new .mp3 files were created
-    current_mp3s = set(glob.glob(os.path.join(output_dir, "*.mp3")))
-    new_mp3s = current_mp3s - existing_mp3s
-
-    if new_mp3s:
-        for mp3 in sorted(new_mp3s):
-            file_size_mb = os.path.getsize(mp3) / (1024 * 1024)
-            print(f"  Saved: {mp3} ({file_size_mb:.1f} MB)")
-        # Return the first new file (for single tracks) or the directory (for albums)
-        if len(new_mp3s) == 1:
-            return new_mp3s.pop()
-        return output_dir
-    else:
-        print("  No new files downloaded (track may already exist in output folder).")
-        return output_dir
-
-
 # ============================================================================
 # SMART DOWNLOAD — picks the right function based on URL
 # ============================================================================
@@ -367,11 +268,13 @@ def download_as_mp3(url: str, output_dir: str = "output") -> str:
     if url_type == "youtube":
         return download_youtube_as_mp3(url, output_dir)
     elif url_type == "spotify":
-        return download_spotify_as_mp3(url, output_dir)
+        # Currently not supported URLs — exit with non-zero code so callers know
+        print("  Detected Spotify URL. Currently not supported. Exiting...")
+        sys.exit(1)
     else:
-        # For unknown URLs, try yt-dlp anyway — it supports hundreds of sites
-        print(f"  Unknown URL type, trying yt-dlp (supports many sites)...")
-        return download_youtube_as_mp3(url, output_dir)
+        # Unknown/unsupported URLs — exit with non-zero code so callers know
+        print("  Unknown or unsupported URL type. Exiting...")
+        sys.exit(1)
 
 
 # ============================================================================
