@@ -63,6 +63,7 @@ def run_worker(poll_interval: float = 1.0):
                 try:
                     with open(processing, 'r', encoding='utf-8') as f:
                         job = json.load(f)
+                    owner_id = job.get('owner_id')
                     entries = job.get('entries', [])
                     concurrency = int(job.get('concurrency', 4))
                     print(f"worker: starting job {jid} ({len(entries)} entries) with concurrency={concurrency}")
@@ -70,7 +71,7 @@ def run_worker(poll_interval: float = 1.0):
                     results = process_batch_entries(entries, output_dir=str(OUT_DIR), concurrency=concurrency)
                     done_path = processing.with_suffix('.done')
                     with open(done_path, 'w', encoding='utf-8') as f:
-                        json.dump({"status": "done", "job_id": jid, "results": results}, f, ensure_ascii=False)
+                        json.dump({"status": "done", "job_id": jid, "owner_id": owner_id, "results": results}, f, ensure_ascii=False)
                     print(f"worker: finished job {jid}")
                     try:
                         processing.unlink()
@@ -79,8 +80,14 @@ def run_worker(poll_interval: float = 1.0):
                 except Exception as e:
                     err_path = processing.with_suffix('.err')
                     tb = traceback.format_exc()
+                    owner_id = None
+                    try:
+                        with open(processing, 'r', encoding='utf-8') as f:
+                            owner_id = json.load(f).get('owner_id')
+                    except Exception:
+                        pass
                     with open(err_path, 'w', encoding='utf-8') as f:
-                        json.dump({"status": "error", "job_id": jid, "error": str(e), "traceback": tb}, f, ensure_ascii=False)
+                        json.dump({"status": "error", "job_id": jid, "owner_id": owner_id, "error": str(e), "traceback": tb}, f, ensure_ascii=False)
                     print(f"worker: job {jid} failed: {e}")
                     try:
                         processing.unlink()

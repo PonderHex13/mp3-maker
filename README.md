@@ -4,7 +4,8 @@ A step-by-step MP3 converter app built to learn Python and web development.
 
 ## What This Project Does
 
-Downloads and converts audio from YouTube and Spotify into MP3 files, with a web interface, API, and standalone executables.
+Downloads and converts audio from YouTube into MP3 files, with a web interface, API, and standalone executables.
+Spotify can be added later as an optional search-only feature.
 
 ## Prerequisites
 
@@ -51,15 +52,14 @@ Each step builds on the previous one. The codebase grows incrementally.
 | Step | Feature | Status | File(s) Changed |
 |------|---------|--------|-----------------|
 | 1 | YouTube → MP3 (single file) | ✅ Done | `mp3_maker.py` |
-| 2 | Spotify → MP3 (single file) | ⬜ Planned | `mp3_maker.py` |
-| 3 | Output quality settings | ⬜ Planned | `mp3_maker.py` |
-| 4 | Search by artist + song name | ⬜ Planned | `mp3_maker.py` |
-| 5 | Batch processing from list | ⬜ Planned | `mp3_maker.py` |
-| 6 | REST API layer | ⬜ Planned | `api.py` |
-| 7 | Web frontend | ⬜ Planned | `static/` |
-| 8 | Docker container | ⬜ Planned | `Dockerfile`, `docker-compose.yml` |
-| 9 | Windows executable | ⬜ Planned | `mp3_maker.spec` |
-| 10 | Linux executable | ⬜ Planned | `mp3_maker.spec` |
+| 2 | Search by artist + song name | ✅ Done | `mp3_maker.py` |
+| 3 | Batch processing from list | ✅ Done | `mp3_maker.py` |
+| 4 | REST API layer | ✅ Done (dev) | `api.py`, `worker.py` |
+| 5 | Web frontend | ⬜ Planned | `static/` |
+| 6 | Docker container | ⬜ Planned | `Dockerfile`, `docker-compose.yml` |
+| 7 | Windows executable | ⬜ Planned | `mp3_maker.spec` |
+| 8 | Linux executable | ⬜ Planned | `mp3_maker.spec` |
+| 9 | Optional: Spotify search only | ⬜ Optional | `mp3_maker.py` |
 
 ---
 
