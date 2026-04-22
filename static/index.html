@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MP3 Maker</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <h1>MP3 Maker</h1>
+      <p>Paste one entry per line (YouTube URL or "Artist - Song")</p>
+    </header>
+
+    <section class="panel submit-panel">
+      <label for="entries" class="label">List of Songs to Convert</label>
+      <textarea id="entries" rows="10" placeholder="Queen - Hammer To Fall
+https://www.youtube.com/watch?v=xPU8OAjjS4k
+The Beatles - Help"></textarea>
+      <div class="actions">
+        <span id="submitInfo" class="muted"></span>
+        <button id="submitBtn" type="button">Submit Job</button>
+      </div>
+    </section>
+
+    <section class="panel jobs-panel">
+      <div class="jobs-header">
+        <h2>Your Jobs</h2>
+        <span class="muted">Auto refresh every 3s</span>
+      </div>
+      <div id="jobsContainer" class="jobs-container"></div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

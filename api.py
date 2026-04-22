@@ -25,6 +25,7 @@ Notes:
 
 import io
 import json
+import asyncio
 import threading
 import time
 import uuid
@@ -34,7 +35,7 @@ from typing import List
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -45,6 +46,10 @@ JOB_DIR.mkdir(exist_ok=True)
 # Serve downloaded MP3 files from /music for convenience in Swagger/UI
 MUSIC_DIR = Path("music")
 MUSIC_DIR.mkdir(exist_ok=True)
+
+# Serve small frontend app files
+STATIC_DIR = Path("static")
+STATIC_DIR.mkdir(exist_ok=True)
 
 # Cleanup configuration for dev mode
 TTL_HOURS = 6
@@ -69,6 +74,7 @@ _cleanup_thread = None
 # Mount static files so clients can download results via HTTP
 app = FastAPI(title="mp3-maker (dev api)")
 app.mount("/music", StaticFiles(directory=str(MUSIC_DIR)), name="music")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 class JobRequest(BaseModel):
@@ -305,6 +311,15 @@ def enqueue(req: JobRequest, request: Request, response: Response):
     return {"job_id": jid}
 
 
+@app.get("/")
+def frontend_home():
+    """Serve the tiny frontend app."""
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="frontend not found")
+    return FileResponse(index_path)
+
+
 @app.get("/whoami")
 def whoami(request: Request, response: Response):
     """Return the current cookie-session owner id.
@@ -393,25 +408,64 @@ def list_job_files(job_id: str, request: Request, response: Response):
     owner_id = _get_or_create_owner_id(request, response)
     _cleanup_once()
     _assert_job_owner(job_id, owner_id)
-    data = _load_done_data(job_id)
+
+    base = JOB_DIR / f"{job_id}"
+    data = {}
+    status = "queued"
+    if (base.with_suffix('.done')).exists():
+        status = "done"
+        with open(base.with_suffix('.done'), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    elif (base.with_suffix('.err')).exists():
+        status = "error"
+        with open(base.with_suffix('.err'), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    elif (base.with_suffix('.processing')).exists():
+        status = "processing"
+        with open(base.with_suffix('.processing'), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    elif (base.with_suffix('.json')).exists():
+        status = "queued"
+        with open(base.with_suffix('.json'), 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    else:
+        raise HTTPException(status_code=404, detail="job not found")
+
     results = data.get("results", [])
 
     entries = []
-    for idx, item in enumerate(results):
-        entries.append(
-            {
-                "entry_index": idx,
-                "input": item.get("input"),
-                "status": item.get("status"),
-                "path": item.get("path"),
-                "deleted_path": item.get("deleted_path"),
-                "error": item.get("error"),
-            }
-        )
+    if results:
+        for idx, item in enumerate(results):
+            entries.append(
+                {
+                    "entry_index": idx,
+                    "input": item.get("input"),
+                    "status": item.get("status"),
+                    "path": item.get("path"),
+                    "deleted_path": item.get("deleted_path"),
+                    "error": item.get("error"),
+                }
+            )
+    else:
+        # For queued/processing (and some error cases), show planned entries
+        # immediately so the UI can render the job's song list right away.
+        planned_entries = data.get("entries", []) if isinstance(data, dict) else []
+        for idx, item in enumerate(planned_entries):
+            entries.append(
+                {
+                    "entry_index": idx,
+                    "input": item,
+                    "status": status,
+                    "path": None,
+                    "deleted_path": None,
+                    "error": data.get("error") if status == "error" else None,
+                }
+            )
 
     return {
         "job_id": job_id,
-        "status": data.get("status", "done"),
+        "status": status,
+        "error": data.get("error"),
         "entries": entries,
     }
 
@@ -536,9 +590,22 @@ if __name__ == "__main__":
             worker_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker.py")
             cmd = [sys.executable, "-u", worker_path]
             print(f"Starting worker subprocess: {cmd}")
-            worker_proc = subprocess.Popen(cmd)
+            # On Windows, put worker in a separate process group so Ctrl+C
+            # targets the API process reliably; API shutdown will terminate worker.
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP
+            worker_proc = subprocess.Popen(cmd, creationflags=creationflags)
 
-        uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=True)
+        # Running with reload while also spawning a worker subprocess can cause
+        # confusing lifecycle behavior (jobs stuck queued). In with-worker mode,
+        # prefer a stable single process.
+        reload_enabled = not args.with_worker
+        try:
+            uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=reload_enabled)
+        except asyncio.CancelledError:
+            # Expected during some shutdown paths; keep logs clean.
+            pass
     finally:
         if worker_proc:
             try:

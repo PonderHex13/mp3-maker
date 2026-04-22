@@ -1,3 +1,14 @@
 "Nirvana - Smells Like Teen Spirit" "https://www.youtube.com/watch?v=fJ9rUzIMcZQ" "Queen - Bohemian Rhapsody" "https://www.youtube.com/watch?v=ktvTqknDobU" "Metallica - Enter Sandman" "https://www.youtube.com/watch?v=CD-E-LDc384" "Guns N' Roses - Sweet Child O' Mine" "https://www.youtube.com/watch?v=1w7OgIMMRc4" "AC/DC - Back In Black" "https://www.youtube.com/watch?v=pAgnJDJN4VA" "Led Zeppelin - Stairway to Heaven" "https://www.youtube.com/watch?v=QkF3oxziUI4" "The Rolling Stones - Paint It Black" "https://www.youtube.com/watch?v=O4irXQhgMqg" "Pink Floyd - Another Brick in the Wall" "https://www.youtube.com/watch?v=YR5ApYxkU-U" "Deep Purple - Smoke on the Water" "https://www.youtube.com/watch?v=zUwEIt9ez7M" "Foo Fighters - Everlong" "https://www.youtube.com/watch?v=eBG7P-K-r1Y" "Radiohead - Creep" "https://www.youtube.com/watch?v=XFkzRNyygfk" "The Killers - Mr. Brightside" "https://www.youtube.com/watch?v=gGdGFtwCNBE" "Arctic Monkeys - Do I Wanna Know?" "https://www.youtube.com/watch?v=bpOSxM0rNPM" "Red Hot Chili Peppers - Californication" "https://www.youtube.com/watch?v=YlUKcNNmywk" "Linkin Park - In the End" "https://www.youtube.com/watch?v=eVTXPUF4Oz4" "Green Day - Boulevard of Broken Dreams" "https://www.youtube.com/watch?v=Soa3gO7tL-c" "Pearl Jam - Alive" "https://www.youtube.com/watch?v=qM0zINtulhM" "Soundgarden - Black Hole Sun" "https://www.youtube.com/watch?v=3mbBbFH9fAg" "The White Stripes - Seven Nation Army" "https://www.youtube.com/watch?v=0J2QdDbelmY" "Oasis - Wonderwall" "https://www.youtube.com/watch?v=bx1Bh8ZvH84" "U2 - With or Without You" "https://www.youtube.com/watch?v=XmSdTa9kaiQ" "Bon Jovi - Livin’ on a Prayer" "https://www.youtube.com/watch?v=lDK9QqIzhwk" "The Clash - Should I Stay or Should I Go" "https://www.youtube.com/watch?v=BN1WwnEDWAM" "Blur - Song 2" "https://www.youtube.com/watch?v=SSbBvKaM6sk" "Kings of Leon - Use Somebody" "https://www.youtube.com/watch?v=gnhXHvRoUd0"
 
 "AD DC - Back In Black" "Queen - Hammer to Fall" "https://www.youtube.com/watch?v=YlUKcNNmywk&list=RDYlUKcNNmywk&start_radio=1" "Beatles - Help" "https://www.youtube.com/watch?v=xPU8OAjjS4k" "Rolling Stones - Dancing in The Street"
+
+AD DC - Back In Black
+Queen - Hammer to Fall
+https://www.youtube.com/watch?v=YlUKcNNmywk&list=RDYlUKcNNmywk&start_radio=1
+Beatles - Help
+https://www.youtube.com/watch?v=xPU8OAjjS4k
+Rolling Stones - Dancing in The Street
+Nirvana - Smells Like Teen Spirit
+https://www.youtube.com/watch?v=fJ9rUzIMcZQ
+Queen - Bohemian Rhapsody
+https://www.youtube.com/watch?v=ktvTqknDobU

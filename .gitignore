@@ -1,5 +1,6 @@
-# Ignore downloaded MP3 files
+# Ignore downloaded MP3 files and jobs
 output/
+jobs/
 
 # Bundled ffmpeg binaries (large, don't commit)
 ffmpeg/
