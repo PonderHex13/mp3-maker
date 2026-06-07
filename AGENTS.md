@@ -67,10 +67,18 @@ This app is being prepared for deployment on **OCI (Oracle Cloud Infrastructure)
 
 ### Environment / Config
 
-No `.env` file yet — configuration is currently hardcoded. Before deploying, extract to env vars:
-- `JOB_DIR`, `MUSIC_DIR`, `STATIC_DIR` paths
-- `TTL_HOURS`, `CLEANUP_INTERVAL_SECONDS`
-- `SESSION_MAX_AGE_SECONDS`
+Key env vars (all have safe defaults):
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `TTL_HOURS` | `1` | How long job files + MP3s survive before cleanup |
+| `CLEANUP_INTERVAL_SECONDS` | `120` | How often background cleanup runs |
+| `MAX_ENTRIES_PER_JOB` | `50` | Cap on songs per job submission |
+| `MAX_CONCURRENCY` | `4` | Max worker threads per job |
+| `MAX_ACTIVE_JOBS_PER_SESSION` | `5` | Per-session active job queue cap |
+| `MAX_ZIP_MB` | `200` | Max total size for download-all ZIP (MB) |
+| `RATE_LIMIT_MAX` | `10` | Max `/enqueue` calls per IP per 60 s |
+| `SECURE_COOKIE` | `0` | Set to `1` when behind HTTPS (Traefik) |
 
 ### Traefik Integration (OCI)
 

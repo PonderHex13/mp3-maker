@@ -25,16 +25,19 @@ Notes:
 
 import io
 import json
+import os
+import re
 import asyncio
 import threading
 import time
 import uuid
 import zipfile
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -51,10 +54,10 @@ MUSIC_DIR.mkdir(exist_ok=True)
 STATIC_DIR = Path("static")
 STATIC_DIR.mkdir(exist_ok=True)
 
-# Cleanup configuration for dev mode
-TTL_HOURS = 6
+# Cleanup configuration
+TTL_HOURS = int(os.environ.get("TTL_HOURS", "1"))
 TTL_SECONDS = TTL_HOURS * 60 * 60
-CLEANUP_INTERVAL_SECONDS = 300
+CLEANUP_INTERVAL_SECONDS = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "120"))
 JOB_SUFFIXES = (".json", ".processing", ".done", ".err")
 STATUS_BY_SUFFIX = {
     ".json": "queued",
@@ -66,6 +69,27 @@ STATUS_BY_SUFFIX = {
 # Cookie-based session config (no manual key sharing required)
 SESSION_COOKIE_NAME = "mp3maker_session"
 SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
+# Set SECURE_COOKIE=1 in production (behind HTTPS / Traefik)
+_SECURE_COOKIE = os.environ.get("SECURE_COOKIE", "0") == "1"
+
+# Input validation limits
+MAX_ENTRIES_PER_JOB = int(os.environ.get("MAX_ENTRIES_PER_JOB", "50"))
+MAX_ENTRY_LENGTH = 500
+MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "4"))
+MAX_ACTIVE_JOBS_PER_SESSION = int(os.environ.get("MAX_ACTIVE_JOBS_PER_SESSION", "5"))
+MAX_ZIP_BYTES = int(os.environ.get("MAX_ZIP_MB", "200")) * 1024 * 1024
+
+# Rate limiting for /enqueue (per IP, sliding window)
+RATE_LIMIT_WINDOW = 60   # seconds
+RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX", "10"))  # requests per window
+_rate_lock = threading.Lock()
+_rate_buckets: dict = defaultdict(deque)  # ip -> deque of timestamps
+
+# Job ID must be a UUID to prevent path traversal
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 # Background cleanup thread state
 _cleanup_stop_event = threading.Event()
@@ -84,11 +108,66 @@ class JobRequest(BaseModel):
     - `concurrency`: how many worker threads the worker should use for this job
     """
     entries: List[str]
-    concurrency: int = 4
+    concurrency: int = 2
+
+    @field_validator("entries")
+    @classmethod
+    def check_entries(cls, v: List[str]) -> List[str]:
+        if not v:
+            raise ValueError("entries must not be empty")
+        if len(v) > MAX_ENTRIES_PER_JOB:
+            raise ValueError(f"too many entries (max {MAX_ENTRIES_PER_JOB})")
+        for entry in v:
+            if len(entry) > MAX_ENTRY_LENGTH:
+                raise ValueError(f"entry too long (max {MAX_ENTRY_LENGTH} chars)")
+        return v
+
+    @field_validator("concurrency")
+    @classmethod
+    def clamp_concurrency(cls, v: int) -> int:
+        return max(1, min(v, MAX_CONCURRENCY))
 
 
 def _job_file(job_id: str, suffix: str) -> Path:
     return JOB_DIR / f"{job_id}{suffix}"
+
+
+def _validate_job_id(job_id: str) -> None:
+    """Reject job_ids that are not valid UUIDs to prevent path traversal."""
+    if not _UUID_RE.match(job_id):
+        raise HTTPException(status_code=404, detail="job not found")
+
+
+def _check_rate_limit(request: Request) -> None:
+    """Sliding-window rate limiter keyed by client IP. Raises 429 when exceeded."""
+    # Prefer X-Forwarded-For when behind a trusted proxy (Traefik sets this).
+    forwarded = request.headers.get("x-forwarded-for")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+    now = time.monotonic()
+    cutoff = now - RATE_LIMIT_WINDOW
+    with _rate_lock:
+        bucket = _rate_buckets[ip]
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT_MAX:
+            raise HTTPException(status_code=429, detail="too many requests — please slow down")
+        bucket.append(now)
+
+
+def _count_active_jobs(owner_id: str) -> int:
+    """Count queued or processing jobs owned by this session."""
+    count = 0
+    for p in JOB_DIR.iterdir():
+        if p.suffix not in (".json", ".processing"):
+            continue
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and data.get("owner_id") == owner_id:
+                count += 1
+        except Exception:
+            continue
+    return count
 
 
 def _get_or_create_owner_id(request: Request, response: Response) -> str:
@@ -104,6 +183,7 @@ def _get_or_create_owner_id(request: Request, response: Response) -> str:
         max_age=SESSION_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
+        secure=_SECURE_COOKIE,
     )
     return owner_id
 
@@ -294,10 +374,18 @@ def enqueue(req: JobRequest, request: Request, response: Response):
     This function performs input validation and writes a small JSON
     describing the job. The worker will pick it up and process it.
     """
+    _check_rate_limit(request)
     if not req.entries:
         raise HTTPException(status_code=400, detail="entries required")
     owner_id = _get_or_create_owner_id(request, response)
-    _cleanup_once()
+
+    active = _count_active_jobs(owner_id)
+    if active >= MAX_ACTIVE_JOBS_PER_SESSION:
+        raise HTTPException(
+            status_code=429,
+            detail=f"too many active jobs (max {MAX_ACTIVE_JOBS_PER_SESSION}) — wait for existing jobs to finish or clear them",
+        )
+
     jid = str(uuid.uuid4())
     obj = {
         "id": jid,
@@ -334,7 +422,6 @@ def whoami(request: Request, response: Response):
 def list_my_jobs(request: Request, response: Response):
     """List jobs visible to the current cookie session owner."""
     owner_id = _get_or_create_owner_id(request, response)
-    _cleanup_once()
 
     jobs = {}
     for p in JOB_DIR.iterdir():
@@ -374,8 +461,8 @@ def job_status(job_id: str, request: Request, response: Response):
     progress. This endpoint reads those files (if present) and returns a
     small status object.
     """
+    _validate_job_id(job_id)
     owner_id = _get_or_create_owner_id(request, response)
-    _cleanup_once()
     _assert_job_owner(job_id, owner_id)
     base = JOB_DIR / f"{job_id}"
     if (base.with_suffix('.done')).exists():
@@ -405,8 +492,8 @@ def list_job_files(job_id: str, request: Request, response: Response):
 
     Useful before calling DELETE /jobs/{job_id}/files/{entry_index}.
     """
+    _validate_job_id(job_id)
     owner_id = _get_or_create_owner_id(request, response)
-    _cleanup_once()
     _assert_job_owner(job_id, owner_id)
 
     base = JOB_DIR / f"{job_id}"
@@ -473,8 +560,8 @@ def list_job_files(job_id: str, request: Request, response: Response):
 @app.delete("/jobs/{job_id}")
 def delete_job(job_id: str, request: Request, response: Response):
     """Clear a job and delete all associated MP3 files."""
+    _validate_job_id(job_id)
     owner_id = _get_or_create_owner_id(request, response)
-    _cleanup_once()
     _assert_job_owner(job_id, owner_id)
     stats = _delete_job_artifacts(job_id, delete_media=True)
     if stats["deleted_job_files"] == 0:
@@ -488,8 +575,8 @@ def delete_job_file(job_id: str, entry_index: int, request: Request, response: R
 
     Marks that result entry as `deleted` in the .done file.
     """
+    _validate_job_id(job_id)
     owner_id = _get_or_create_owner_id(request, response)
-    _cleanup_once()
     _assert_job_owner(job_id, owner_id)
     if entry_index < 0:
         raise HTTPException(status_code=400, detail="entry_index must be >= 0")
@@ -536,8 +623,8 @@ def delete_job_file(job_id: str, entry_index: int, request: Request, response: R
 @app.get("/jobs/{job_id}/download-all")
 def download_all(job_id: str, request: Request, response: Response):
     """Stream a ZIP generated in-memory from available files in a completed job."""
+    _validate_job_id(job_id)
     owner_id = _get_or_create_owner_id(request, response)
-    _cleanup_once()
     _assert_job_owner(job_id, owner_id)
     data = _load_done_data(job_id)
     results = data.get("results", [])
@@ -558,6 +645,13 @@ def download_all(job_id: str, request: Request, response: Response):
 
     if not files_to_zip:
         raise HTTPException(status_code=404, detail="no downloadable files found for job")
+
+    total_bytes = sum(p.stat().st_size for p in files_to_zip)
+    if total_bytes > MAX_ZIP_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"total download size ({total_bytes // (1024*1024)} MB) exceeds limit ({MAX_ZIP_BYTES // (1024*1024)} MB) — download files individually",
+        )
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
