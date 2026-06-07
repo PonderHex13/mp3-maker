@@ -1,119 +1,163 @@
-# MP3 Maker 🎵
+# MP3 Maker
 
-A step-by-step MP3 converter app built to learn Python and web development.
+Downloads and converts YouTube audio to MP3 via a web UI and REST API.
+Submit song titles (`Artist - Title`) or YouTube URLs, track progress live, and download results.
 
-## What This Project Does
+---
 
-Downloads and converts audio from YouTube into MP3 files, with a web interface, API, and standalone executables.
-Spotify can be added later as an optional search-only feature.
+## Running locally (no Docker)
 
-## Prerequisites
-
-Before you start, install these on your system:
-
-1. **Python 3.10+** — [python.org/downloads](https://www.python.org/downloads/)
-2. **ffmpeg** — Required for audio conversion
-   - **Windows**: `winget install ffmpeg` or download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH
-   - **Linux**: `sudo apt install ffmpeg`
-   - **Mac**: `brew install ffmpeg`
-3. **pip** — Comes with Python, used to install dependencies
-
-Verify installations:
-```bash
-python --version    # Should show 3.10+
-ffmpeg -version     # Should show ffmpeg version info
-```
-
-## Quick Start
+**Requirements:** Python 3.10+, ffmpeg on PATH
 
 ```bash
-# 1. Clone the repo
 git clone <your-repo-url>
 cd mp3-maker
 
-# 2. Create a virtual environment (recommended)
 python -m venv venv
 # Windows:
 venv\Scripts\activate
 # Linux/Mac:
 source venv/bin/activate
 
-# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Run it!
-python mp3_maker.py --url "https://www.youtube.com/watch?v=VIDEO_ID"
+# Start API + worker together:
+python api.py --with-worker
 ```
 
-## Development Roadmap
+Open [http://localhost:8000](http://localhost:8000).
 
-Each step builds on the previous one. The codebase grows incrementally.
-
-| Step | Feature | Status | File(s) Changed |
-|------|---------|--------|-----------------|
-| 1 | YouTube → MP3 (single file) | ✅ Done | `mp3_maker.py` |
-| 2 | Search by artist + song name | ✅ Done | `mp3_maker.py` |
-| 3 | Batch processing from list | ✅ Done | `mp3_maker.py` |
-| 4 | REST API layer | ✅ Done (dev) | `api.py`, `worker.py` |
-| 5 | Web frontend | ⬜ Planned | `static/` |
-| 6 | Docker container | ⬜ Planned | `Dockerfile`, `docker-compose.yml` |
-| 7 | Windows executable | ⬜ Planned | `mp3_maker.spec` |
-| 8 | Linux executable | ⬜ Planned | `mp3_maker.spec` |
-| 9 | Optional: Spotify search only | ⬜ Optional | `mp3_maker.py` |
+> **ffmpeg:** install via `winget install ffmpeg` (Windows), `sudo apt install ffmpeg` (Debian/Ubuntu), or `brew install ffmpeg` (Mac). Or drop the ffmpeg binaries into the `ffmpeg/` folder next to the project — they'll be picked up automatically.
 
 ---
 
-## Step-by-Step Guide
+## Running in Docker (single container)
 
-### Step 1: YouTube → MP3
-
-**What it does**: Takes a YouTube URL and downloads the audio as an MP3 file.
-
-**How it works**:
-- Uses `yt-dlp` (a powerful YouTube downloader library) to fetch the video
-- Uses `ffmpeg` (via yt-dlp's post-processor) to extract and convert audio to MP3
-- Saves the MP3 file to an `output/` folder
-
-**Usage**:
 ```bash
-# Download a YouTube video as MP3
-python mp3_maker.py --url "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+# Build
+docker build -t mp3-maker .
 
-# Specify output directory
-python mp3_maker.py --url "https://www.youtube.com/watch?v=dQw4w9WgXcQ" --output ./my-music
+# Run (ephemeral — files are lost when container stops)
+docker run -p 8000:8000 mp3-maker
 ```
 
-**Key concepts learned**:
-- Python command-line argument parsing (`argparse`)
-- Using external libraries (`yt-dlp`)
-- File system operations (`os`, `pathlib`)
-- Error handling with `try/except`
-- Function organization and `if __name__ == "__main__"`
+Open [http://localhost:8000](http://localhost:8000).
+
+To keep downloaded files across restarts, mount volumes:
+
+```bash
+docker run -p 8000:8000 \
+  -v "$(pwd)/music:/app/music" \
+  -v "$(pwd)/jobs:/app/jobs" \
+  mp3-maker
+```
+
+On Windows with PowerShell:
+
+```powershell
+docker run -p 8000:8000 `
+  -v "${PWD}/music:/app/music" `
+  -v "${PWD}/jobs:/app/jobs" `
+  mp3-maker
+```
+
+### Split API / worker containers
+
+Set the `MODE` env var to run only one role per container:
+
+```bash
+# Terminal 1 — API
+docker run -p 8000:8000 -e MODE=api \
+  -v "$(pwd)/music:/app/music" \
+  -v "$(pwd)/jobs:/app/jobs" \
+  mp3-maker
+
+# Terminal 2 — Worker
+docker run -e MODE=worker \
+  -v "$(pwd)/music:/app/music" \
+  -v "$(pwd)/jobs:/app/jobs" \
+  mp3-maker
+```
 
 ---
 
-*More steps will be documented as they are implemented.*
+## Environment variables
 
-## Project Structure
+All limits have safe defaults and can be tuned without rebuilding the image.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TTL_HOURS` | `1` | Hours before job files and MP3s are automatically deleted |
+| `CLEANUP_INTERVAL_SECONDS` | `120` | How often the background cleanup runs (seconds) |
+| `MAX_ENTRIES_PER_JOB` | `50` | Maximum songs per job submission |
+| `MAX_CONCURRENCY` | `4` | Maximum parallel download threads per job |
+| `MAX_ACTIVE_JOBS_PER_SESSION` | `5` | How many queued/processing jobs one browser session can have at once |
+| `MAX_ZIP_MB` | `200` | Max total MB allowed for the "Download All" ZIP endpoint |
+| `RATE_LIMIT_MAX` | `10` | Max `/enqueue` requests per IP per 60 seconds |
+| `SECURE_COOKIE` | `0` | Set to `1` when the app is behind HTTPS (e.g. Traefik) so session cookies get the `Secure` flag |
+| `MODE` | *(both)* | `api` — run API only; `worker` — run worker only; unset — run both |
+
+Example — tighter limits for a small shared server:
+
+```bash
+docker run -p 8000:8000 \
+  -e TTL_HOURS=1 \
+  -e MAX_ENTRIES_PER_JOB=20 \
+  -e RATE_LIMIT_MAX=5 \
+  -e MAX_ACTIVE_JOBS_PER_SESSION=3 \
+  -e SECURE_COOKIE=1 \
+  mp3-maker
+```
+
+---
+
+## API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/enqueue` | Submit a job: `{"entries": ["Artist - Title", "https://..."], "concurrency": 2}` |
+| `GET` | `/jobs` | List your session's jobs |
+| `GET` | `/jobs/{id}` | Job status and per-song results |
+| `GET` | `/jobs/{id}/files` | Per-entry file list with stable indexes |
+| `GET` | `/jobs/{id}/download-all` | Stream a ZIP of all finished MP3s |
+| `DELETE` | `/jobs/{id}` | Delete job and its MP3 files |
+| `DELETE` | `/jobs/{id}/files/{index}` | Delete one MP3 from a finished job |
+| `GET` | `/whoami` | Show your session ID (useful for debugging) |
+
+Interactive docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+---
+
+## Project structure
 
 ```
 mp3-maker/
-├── .instructions.md    # Agent instructions for development
-├── README.md           # This file
-├── requirements.txt    # Python dependencies
-├── mp3_maker.py        # Core converter (grows with each step)
-└── output/             # Downloaded MP3 files (git-ignored)
+├── api.py              # FastAPI app — enqueue, status, download endpoints
+├── worker.py           # File-queue worker — polls jobs/, runs downloads
+├── mp3_maker.py        # Core download logic (yt-dlp + ffmpeg)
+├── entrypoint.sh       # Docker entrypoint (starts API and/or worker)
+├── Dockerfile
+├── requirements.txt
+├── static/             # Browser UI (HTML, CSS, JS)
+├── music/              # Downloaded MP3s (git-ignored, ephemeral in container)
+├── jobs/               # Job state files (git-ignored, ephemeral in container)
+└── output/             # Legacy output dir (git-ignored)
 ```
+
+---
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| `ffmpeg not found` | Install ffmpeg and make sure it's in your PATH |
-| `yt-dlp` errors | Run `pip install --upgrade yt-dlp` to get latest version |
-| Video unavailable | Check if the URL is correct and the video isn't region-locked |
-| Permission denied | Make sure the output directory is writable |
+| `ffmpeg not found` | Install ffmpeg and ensure it's on PATH, or drop binaries into `ffmpeg/` |
+| `yt-dlp` errors | `pip install --upgrade yt-dlp` |
+| Video unavailable | Check the URL isn't region-locked or age-restricted |
+| 429 Too Many Requests | Slow down or raise `RATE_LIMIT_MAX` |
+| Job stuck in `processing` | Worker may have crashed — restart it, the job will need to be resubmitted |
+
+---
 
 ## License
 
-MIT — Use it however you like.
+MIT
