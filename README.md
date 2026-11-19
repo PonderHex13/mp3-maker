@@ -1,7 +1,9 @@
 # MP3 Maker
 
 Downloads and converts YouTube audio to MP3 via a web UI and REST API.
-Submit song titles (`Artist - Title`) or YouTube URLs, track progress live, and download results.
+Submit song titles (`Artist - Title`), YouTube URLs, or Spotify track URLs, track progress live, and download results.
+For a Spotify track, the app looks up its title and searches YouTube; audio comes from YouTube, not Spotify. Spotify's public lookup may omit the artist, so the top search result can be a different song or version. Spotify albums, playlists, and short links are not supported.
+New MP3s include artist and title tags derived from the input or available video metadata. When the source is missing or inaccurate, these tags may also be inaccurate.
 
 ---
 
@@ -13,9 +15,9 @@ Submit song titles (`Artist - Title`) or YouTube URLs, track progress live, and 
 git clone git@gitlab.com:ponderhex13/mp3-maker.git
 cd mp3-maker
 
-python -m venv venv
+python -m venv .venv
 # Windows PowerShell:
-.\venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 # Linux/Mac:
 source venv/bin/activate
 
@@ -33,7 +35,7 @@ failed and can be resubmitted. Queued jobs remain until processed or deleted.
 API and worker processes must share a jobs filesystem that supports file locking
 and atomic renames.
 
-> **ffmpeg:** install via `winget install ffmpeg` (Windows), `sudo apt install ffmpeg` (Debian/Ubuntu), or `brew install ffmpeg` (Mac). Or drop the ffmpeg binaries into the `ffmpeg/` folder next to the project — they'll be picked up automatically.
+> **FFmpeg:** install via `winget install ffmpeg` (Windows), `sudo apt install ffmpeg` (Debian/Ubuntu), or `brew install ffmpeg` (Mac). Both `ffmpeg` and `ffprobe` must be available on `PATH`. Alternatively, place both executables directly in the project's `ffmpeg/` folder: `ffmpeg.exe` and `ffprobe.exe` on Windows, or `ffmpeg` and `ffprobe` on Linux/macOS. The app checks this folder first. Docker installs FFmpeg inside the image, so it does not need the local binaries.
 
 ---
 
@@ -195,6 +197,6 @@ mp3-maker/
 
 ---
 
-## License
+## AI use
 
-MIT
+AI tools were used in creating this project.

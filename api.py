@@ -285,6 +285,11 @@ def _resolve_music_path(path_str: str) -> Path:
     return path
 
 
+def _download_filename(path: Path) -> str:
+    """Hide the generated collision-avoidance suffix from downloaded filenames."""
+    return re.sub(r" \[[0-9a-f]{32}\](?=\.mp3$)", "", path.name, flags=re.IGNORECASE)
+
+
 def _load_done_data(job_id: str) -> dict:
     done_path = _job_file(job_id, ".done")
     if not done_path.exists():
@@ -606,7 +611,7 @@ def download_job_file(job_id: str, entry_index: int, request: Request, response:
             raise ValueError("file not found")
     except (OSError, ValueError):
         raise HTTPException(status_code=404, detail="file not found")
-    return FileResponse(path, media_type="audio/mpeg", filename=path.name)
+    return FileResponse(path, media_type="audio/mpeg", filename=_download_filename(path))
 
 
 @app.delete("/jobs/{job_id}")
@@ -712,10 +717,11 @@ def download_all(job_id: str, request: Request, response: Response):
     with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
         used_names = set()
         for media_path in files_to_zip:
-            name = media_path.name
+            name = _download_filename(media_path)
+            clean_path = Path(name)
             counter = 2
             while name in used_names:
-                name = f"{media_path.stem} ({counter}){media_path.suffix}"
+                name = f"{clean_path.stem} ({counter}){clean_path.suffix}"
                 counter += 1
             used_names.add(name)
             zf.write(media_path, arcname=name)

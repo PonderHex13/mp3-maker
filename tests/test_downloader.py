@@ -1,16 +1,41 @@
 import importlib
 import sys
 import tempfile
+import io
 import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from mutagen.id3 import ID3
 
 with patch.dict(sys.modules, {"yt_dlp": types.ModuleType("yt_dlp")}):
     downloader = importlib.import_module("mp3_maker")
 
 
 class DownloaderTests(unittest.TestCase):
+    def test_song_filename_prefers_hints_and_removes_common_labels(self):
+        metadata = {"artist": "Oasis", "track": "Champagne Supernova (Remastered)"}
+        self.assertEqual(downloader._song_filename(metadata), "Oasis - Champagne Supernova")
+        self.assertEqual(downloader._song_filename(metadata, "My Artist", "My Song (Official Video)"), "My Artist - My Song")
+        self.assertEqual(downloader._song_filename({"title": "Artist - Song (Live)"}), "Artist - Song (Live)")
+        self.assertEqual(downloader._song_filename({"title": "Song", "uploader": "Artist - Topic"}), "Artist - Song")
+        self.assertEqual(downloader._song_filename({"title": "Song"}), "Unknown Artist - Song")
+        self.assertEqual(downloader._song_filename({"artist": "A/B", "track": "Song: Title"}), "A_B - Song_ Title")
+
+    def test_tags_preserve_original_characters_and_other_metadata(self):
+        from mutagen.id3 import TALB
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "track.mp3"
+            path.write_bytes(b"audio")
+            initial = ID3()
+            initial.add(TALB(encoding=3, text=["Album"]))
+            initial.save(path)
+            downloader._write_song_tags(path, "AC/DC", "Song: Title")
+            tags = ID3(path)
+            self.assertEqual(tags["TPE1"].text, ["AC/DC"])
+            self.assertEqual(tags["TIT2"].text, ["Song: Title"])
+            self.assertEqual(tags["TALB"].text, ["Album"])
+
     def test_url_hosts_are_checked_not_substrings(self):
         self.assertEqual(downloader.detect_url_type("https://music.youtube.com/watch?v=1"), "youtube")
         self.assertEqual(downloader.detect_url_type("https://youtu.be/abc"), "youtube")
@@ -27,9 +52,24 @@ class DownloaderTests(unittest.TestCase):
 
     def test_unsupported_urls_raise_or_return_errors(self):
         with self.assertRaises(ValueError):
-            downloader.download_link_as_mp3("https://open.spotify.com/track/1")
+            downloader.download_link_as_mp3("https://open.spotify.com/playlist/1")
         result = downloader.process_entry("https://example.com/youtube.com")
         self.assertEqual(result["status"], "error")
+
+    def test_spotify_track_uses_title_to_search_youtube(self):
+        url = "https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp?si=example"
+        with patch.object(downloader, "urlopen", return_value=io.BytesIO(b'{"title":"Mr. Brightside"}')) as lookup, \
+             patch.object(downloader, "_download_search", return_value="music/song.mp3") as search:
+            self.assertEqual(downloader.download_link_as_mp3(url), "music/song.mp3")
+        search.assert_called_once_with("Mr. Brightside", "output")
+        self.assertIn("open.spotify.com%2Ftrack%2F3n3Ppam7vgaVa1iaRUc9Lp", lookup.call_args.args[0])
+
+    def test_spotify_lookup_failure_is_reported(self):
+        url = "https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp"
+        with patch.object(downloader, "urlopen", side_effect=OSError("network error")):
+            result = downloader.process_entry(url)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Spotify track information", result["error"])
 
     def test_never_returns_an_unrelated_existing_mp3(self):
         class FakeYDL:
@@ -59,7 +99,9 @@ class DownloaderTests(unittest.TestCase):
             with patch.object(FakeYDL, "extract_info", create_output), \
                  patch.object(downloader.yt_dlp, "YoutubeDL", FakeYDL, create=True):
                 result = downloader.download_youtube_as_mp3("https://youtu.be/abc", directory)
-            self.assertEqual(Path(result).read_bytes(), b"new audio")
+            self.assertTrue(Path(result).read_bytes().endswith(b"new audio"))
+            self.assertEqual(ID3(result)["TPE1"].text, ["Unknown Artist"])
+            self.assertEqual(ID3(result)["TIT2"].text, ["song"])
 
 
 if __name__ == "__main__":

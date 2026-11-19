@@ -24,7 +24,7 @@ class ApiIntegrationTests(unittest.TestCase):
             music.mkdir()
 
             def fake_download(entry, output_dir):
-                target = Path(output_dir) / "song.mp3"
+                target = Path(output_dir) / "song [c5ebb0bb59f142d6baeafa4d597f8d14].mp3"
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(b"test audio")
                 return {"input": entry, "status": "ok", "path": str(target)}
@@ -54,6 +54,7 @@ class ApiIntegrationTests(unittest.TestCase):
                     download = owner.get(f"/jobs/{job_id}/files/0/download")
                     self.assertEqual(download.status_code, 200)
                     self.assertEqual(download.content, b"test audio")
+                    self.assertIn('filename="song.mp3"', download.headers["content-disposition"])
                     archive = owner.get(f"/jobs/{job_id}/download-all")
                     self.assertEqual(archive.status_code, 200)
                     with zipfile.ZipFile(io.BytesIO(archive.content)) as zipped:

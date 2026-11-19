@@ -75,6 +75,7 @@ function prettyFileName(pathValue) {
   const base = String(pathValue).split(/[\\/]/).pop() || String(pathValue);
   // Normalize odd slash characters and decode URL-safe text if present.
   return base
+    .replace(/ \[[0-9a-f]{32}\](?=\.mp3$)/i, "")
     .replaceAll("⧸", "/")
     .replaceAll("﹨", "\\")
     .replaceAll("%20", " ");

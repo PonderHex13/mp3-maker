@@ -1,7 +1,8 @@
 """
 mp3_maker.py — Core MP3 converter module
 
-Downloads YouTube audio and converts it to MP3. Spotify URLs are not supported.
+Downloads YouTube audio and converts it to MP3. Spotify track links are used
+only to look up a track title for a YouTube search.
 
 Usage:
   python mp3_maker.py --url "https://www.youtube.com/watch?v=VIDEO_ID"
@@ -20,11 +21,16 @@ import os
 import argparse
 
 import uuid
-from urllib.parse import urlsplit
+import re
+import json
+from pathlib import Path
+from urllib.parse import urlsplit, urlencode
+from urllib.request import urlopen
 
 # 'yt_dlp' is the YouTube downloader library
 # It can download video/audio from YouTube and hundreds of other sites
 import yt_dlp
+from mutagen.id3 import ID3, ID3NoHeaderError, TPE1, TIT2
 from concurrent.futures import ThreadPoolExecutor
 
 
@@ -100,7 +106,53 @@ def detect_url_type(url: str) -> str:
 # === STEP 1: YouTube to MP3 ===
 # ============================================================================
 
-def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
+def _clean_song_text(value: str) -> str:
+    """Remove common video labels without discarding meaningful song versions."""
+    value = re.sub(
+        r"\s*[\[(]\s*(?:official\s+(?:music\s+)?video|official\s+audio|"
+        r"lyric(?:s|\s+video)?|audio|visuali[sz]er|remaster(?:ed)?(?:\s+\d{4})?|"
+        r"\d{4}\s+remaster(?:ed)?|hd|4k)\s*[\])]",
+        "", value, flags=re.IGNORECASE,
+    )
+    return re.sub(r"\s+", " ", value).strip(" -\t")
+
+
+def _song_details(info: dict, artist_hint: str | None = None, title_hint: str | None = None) -> tuple[str, str]:
+    """Prefer user input or music metadata; fall back to video title and channel."""
+    raw_title = str(info.get("track") or info.get("title") or "Unknown Title")
+    artist = artist_hint or info.get("artist") or info.get("creator")
+    title = title_hint or raw_title
+    if not artist and " - " in raw_title:
+        artist, title = raw_title.split(" - ", 1)
+    if not artist:
+        artist = info.get("uploader") or info.get("channel") or "Unknown Artist"
+    artist = re.sub(r"\s+-\s+Topic$", "", str(artist), flags=re.IGNORECASE)
+    artist = _clean_song_text(str(artist)) or "Unknown Artist"
+    title = _clean_song_text(str(title)) or "Unknown Title"
+    if title.casefold().startswith(artist.casefold() + " - "):
+        title = title[len(artist) + 3:].strip() or "Unknown Title"
+    return artist, title
+
+
+def _song_filename(info: dict, artist_hint: str | None = None, title_hint: str | None = None) -> str:
+    artist, title = _song_details(info, artist_hint, title_hint)
+    name = f"{artist} - {title}"
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).rstrip(" .")
+    return name[:180].rstrip(" .") or "Unknown Artist - Unknown Title"
+
+
+def _write_song_tags(path: Path, artist: str, title: str) -> None:
+    """Write artist and title ID3 tags, preserving other existing tags."""
+    try:
+        tags = ID3(path)
+    except ID3NoHeaderError:
+        tags = ID3()
+    tags.setall("TPE1", [TPE1(encoding=3, text=[artist])])
+    tags.setall("TIT2", [TIT2(encoding=3, text=[title])])
+    tags.save(path)
+
+
+def download_youtube_as_mp3(url: str, output_dir: str = "output", *, artist_hint: str | None = None, title_hint: str | None = None) -> str:
     """
     Download a YouTube video and convert it to an MP3 file.
 
@@ -227,9 +279,16 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
     # Check that we got a file
     for path in (downloaded_file[0], expected_file):
         if path and os.path.isfile(path):
-            file_size_mb = os.path.getsize(path) / (1024 * 1024)
-            print(f"  Saved: {path} ({file_size_mb:.1f} MB)")
-            return path
+            song_info = info if isinstance(info, dict) else {}
+            artist, title = _song_details(song_info, artist_hint, title_hint)
+            _write_song_tags(Path(path), artist, title)
+            filename = _song_filename(song_info, artist_hint, title_hint)
+            final_path = Path(output_dir) / f"{filename} [{download_id}].mp3"
+            if Path(path) != final_path:
+                os.replace(path, final_path)
+            file_size_mb = final_path.stat().st_size / (1024 * 1024)
+            print(f"  Saved: {final_path} ({file_size_mb:.1f} MB)")
+            return str(final_path)
 
     raise FileNotFoundError(
         "Download seemed to succeed but the output MP3 file was not found. "
@@ -245,7 +304,11 @@ def download_title_as_mp3(name: str, author: str, output_dir: str = "output") ->
     This reuses the existing download function as a template so behaviour
     (ffmpeg detection, postprocessor hooks, output naming) stays consistent.
     """
-    query = f"{author} {name}"
+    return _download_search(f"{author} {name}", output_dir, artist_hint=author, title_hint=name)
+
+
+def _download_search(query: str, output_dir: str, *, artist_hint: str | None = None, title_hint: str | None = None) -> str:
+    """Search YouTube for one result and download it."""
     print(f"Searching YouTube for: {query}")
 
     # Use yt-dlp's "ytsearch1:" to fetch the best match without downloading
@@ -277,7 +340,33 @@ def download_title_as_mp3(name: str, author: str, output_dir: str = "output") ->
         raise FileNotFoundError("Could not determine video URL from search result")
 
     # Reuse the existing download function for consistent behaviour
-    return download_youtube_as_mp3(video_url, output_dir)
+    return download_youtube_as_mp3(video_url, output_dir, artist_hint=artist_hint, title_hint=title_hint)
+
+
+def download_spotify_track(url: str, output_dir: str = "output") -> str:
+    """Look up a public Spotify track title and search YouTube for it."""
+    parts = urlsplit(url)
+    if parts.scheme.lower() != "https" or (parts.hostname or "").lower() != "open.spotify.com":
+        raise ValueError("Use a Spotify track link from open.spotify.com")
+    segments = parts.path.strip("/").split("/")
+    if len(segments) != 2 or segments[0] != "track" or not re.fullmatch(r"[A-Za-z0-9]{22}", segments[1]):
+        raise ValueError("Only individual Spotify track links are supported; albums and playlists are not supported")
+    canonical_url = f"https://open.spotify.com/track/{segments[1]}"
+    endpoint = "https://open.spotify.com/oembed?" + urlencode({"url": canonical_url})
+    try:
+        with urlopen(endpoint, timeout=10) as response:
+            body = response.read(65537)
+        if len(body) > 65536:
+            raise ValueError("Spotify response was too large")
+        payload = json.loads(body)
+        if not isinstance(payload, dict):
+            raise ValueError("Spotify returned an invalid response")
+        title = payload.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("Spotify did not return a track title")
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError(f"Could not retrieve Spotify track information: {exc}") from exc
+    return _download_search(title.strip(), output_dir)
 def process_entry(entry_line: str, output_dir: str = "output") -> dict:
     """Parse and download one entry, returning a success or error result."""
     entry_line = str(entry_line).strip()
@@ -335,7 +424,7 @@ def download_link_as_mp3(url: str, output_dir: str = "output") -> str:
     """
     Download from any supported URL and convert to MP3.
 
-    Downloads supported YouTube URLs and rejects unsupported sources.
+    Downloads YouTube URLs or searches YouTube for a Spotify track.
 
     Args:
         url:        YouTube URL
@@ -349,7 +438,7 @@ def download_link_as_mp3(url: str, output_dir: str = "output") -> str:
     if url_type == "youtube":
         return download_youtube_as_mp3(url, output_dir)
     elif url_type == "spotify":
-        raise ValueError("Spotify URLs are not supported")
+        return download_spotify_track(url, output_dir)
     else:
         raise ValueError("Unknown or unsupported URL type")
 
