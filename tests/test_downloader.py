@@ -13,10 +13,14 @@ with patch.dict(sys.modules, {"yt_dlp": types.ModuleType("yt_dlp")}):
 
 
 class DownloaderTests(unittest.TestCase):
-    def test_song_filename_prefers_hints_and_removes_common_labels(self):
+    def test_song_filename_prefers_metadata_and_removes_common_labels(self):
         metadata = {"artist": "Oasis", "track": "Champagne Supernova (Remastered)"}
         self.assertEqual(downloader._song_filename(metadata), "Oasis - Champagne Supernova")
-        self.assertEqual(downloader._song_filename(metadata, "My Artist", "My Song (Official Video)"), "My Artist - My Song")
+        self.assertEqual(downloader._song_filename(metadata, "Oazis", "Champagne Supernovaa"), "Oasis - Champagne Supernova")
+        self.assertEqual(downloader._song_filename({}, "My Artist", "My Song (Official Video)"), "My Artist - My Song")
+        self.assertEqual(downloader._song_filename({"title": "Oasis - Wonderwall (Official Video)"}, "Oazis", "Wonderwalll"), "Oasis - Wonderwall")
+        self.assertEqual(downloader._song_filename({"artist": "Oasis"}, "Oazis", "Wonderwall"), "Oasis - Wonderwall")
+        self.assertEqual(downloader._song_filename({"track": "Wonderwall"}, "Oasis", "Wonderwalll"), "Oasis - Wonderwall")
         self.assertEqual(downloader._song_filename({"title": "Artist - Song (Live)"}), "Artist - Song (Live)")
         self.assertEqual(downloader._song_filename({"title": "Song", "uploader": "Artist - Topic"}), "Artist - Song")
         self.assertEqual(downloader._song_filename({"title": "Song"}), "Unknown Artist - Song")
@@ -55,6 +59,11 @@ class DownloaderTests(unittest.TestCase):
             downloader.download_link_as_mp3("https://open.spotify.com/playlist/1")
         result = downloader.process_entry("https://example.com/youtube.com")
         self.assertEqual(result["status"], "error")
+
+    def test_terminal_color_codes_are_removed_from_errors(self):
+        with patch.object(downloader, "download_link_as_mp3", side_effect=ValueError("\x1b[0;31mERROR:\x1b[0m HTTP 403")):
+            result = downloader.process_entry("https://youtu.be/example")
+        self.assertEqual(result["error"], "ERROR: HTTP 403")
 
     def test_spotify_track_uses_title_to_search_youtube(self):
         url = "https://open.spotify.com/track/3n3Ppam7vgaVa1iaRUc9Lp?si=example"

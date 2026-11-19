@@ -725,9 +725,13 @@ def download_all(job_id: str, request: Request, response: Response):
                 counter += 1
             used_names.add(name)
             zf.write(media_path, arcname=name)
+    zip_size = zip_buffer.tell()
     zip_buffer.seek(0)
 
-    headers = {"Content-Disposition": f'attachment; filename="{job_id}.zip"'}
+    headers = {
+        "Content-Disposition": f'attachment; filename="{job_id}.zip"',
+        "Content-Length": str(zip_size),
+    }
     return StreamingResponse(zip_buffer, media_type="application/zip", headers=headers)
 
 

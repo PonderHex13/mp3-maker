@@ -1,5 +1,5 @@
 # Direct dependencies tested together. Update yt-dlp when site changes require it.
-yt-dlp==2026.10.26
+yt-dlp[default]==2026.10.26
 fastapi==0.165.0
 uvicorn[standard]==0.54.0
 pydantic==2.14.3

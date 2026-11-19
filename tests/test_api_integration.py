@@ -57,6 +57,7 @@ class ApiIntegrationTests(unittest.TestCase):
                     self.assertIn('filename="song.mp3"', download.headers["content-disposition"])
                     archive = owner.get(f"/jobs/{job_id}/download-all")
                     self.assertEqual(archive.status_code, 200)
+                    self.assertEqual(int(archive.headers["content-length"]), len(archive.content))
                     with zipfile.ZipFile(io.BytesIO(archive.content)) as zipped:
                         self.assertEqual(sorted(zipped.namelist()), ["song (2).mp3", "song.mp3"])
                     with patch.object(api, "MAX_ZIP_BYTES", 1):

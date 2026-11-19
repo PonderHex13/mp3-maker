@@ -118,12 +118,14 @@ def _clean_song_text(value: str) -> str:
 
 
 def _song_details(info: dict, artist_hint: str | None = None, title_hint: str | None = None) -> tuple[str, str]:
-    """Prefer user input or music metadata; fall back to video title and channel."""
-    raw_title = str(info.get("track") or info.get("title") or "Unknown Title")
-    artist = artist_hint or info.get("artist") or info.get("creator")
-    title = title_hint or raw_title
-    if not artist and " - " in raw_title:
-        artist, title = raw_title.split(" - ", 1)
+    """Prefer track metadata, then video title, submitted input, and channel."""
+    track = str(info.get("track") or "").strip()
+    video_title = str(info.get("title") or "").strip()
+    title_artist, video_song = None, video_title
+    if not track and " - " in video_title:
+        title_artist, video_song = video_title.split(" - ", 1)
+    artist = info.get("artist") or title_artist or artist_hint or info.get("creator")
+    title = track or video_song or title_hint or "Unknown Title"
     if not artist:
         artist = info.get("uploader") or info.get("channel") or "Unknown Artist"
     artist = re.sub(r"\s+-\s+Topic$", "", str(artist), flags=re.IGNORECASE)
@@ -388,7 +390,8 @@ def process_entry(entry_line: str, output_dir: str = "output") -> dict:
                 raise ValueError("Entry is not a URL or 'Author - Title' format (strict batch mode)")
         result.update(status="ok", path=path)
     except Exception as exc:
-        result.update(status="error", error=str(exc))
+        message = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", str(exc))
+        result.update(status="error", error=message)
     return result
 
 
