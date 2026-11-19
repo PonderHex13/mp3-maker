@@ -32,21 +32,27 @@ import threading
 import time
 import uuid
 import zipfile
+import shutil
 from collections import defaultdict, deque
 from pathlib import Path
-from typing import List
+from typing import List, Literal
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, field_validator
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from job_store import queue_lock, write_json
+from job_service import job_entries
+from settings import (TTL_HOURS, CLEANUP_INTERVAL_SECONDS, STALE_JOB_SECONDS,
+                      MAX_ENTRIES_PER_JOB, MAX_CONCURRENCY, MAX_ACTIVE_JOBS_PER_SESSION,
+                      MAX_ZIP_BYTES, RATE_LIMIT_MAX)
 
 
 # Directory where job JSON files are stored. The worker polls this folder.
 JOB_DIR = Path("jobs")
 JOB_DIR.mkdir(exist_ok=True)
 
-# Serve downloaded MP3 files from /music for convenience in Swagger/UI
+# Store downloaded MP3 files; access is checked by the job endpoints.
 MUSIC_DIR = Path("music")
 MUSIC_DIR.mkdir(exist_ok=True)
 
@@ -55,9 +61,7 @@ STATIC_DIR = Path("static")
 STATIC_DIR.mkdir(exist_ok=True)
 
 # Cleanup configuration
-TTL_HOURS = int(os.environ.get("TTL_HOURS", "1"))
 TTL_SECONDS = TTL_HOURS * 60 * 60
-CLEANUP_INTERVAL_SECONDS = int(os.environ.get("CLEANUP_INTERVAL_SECONDS", "120"))
 JOB_SUFFIXES = (".json", ".processing", ".done", ".err")
 STATUS_BY_SUFFIX = {
     ".json": "queued",
@@ -73,15 +77,10 @@ SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 _SECURE_COOKIE = os.environ.get("SECURE_COOKIE", "0") == "1"
 
 # Input validation limits
-MAX_ENTRIES_PER_JOB = int(os.environ.get("MAX_ENTRIES_PER_JOB", "50"))
 MAX_ENTRY_LENGTH = 500
-MAX_CONCURRENCY = int(os.environ.get("MAX_CONCURRENCY", "4"))
-MAX_ACTIVE_JOBS_PER_SESSION = int(os.environ.get("MAX_ACTIVE_JOBS_PER_SESSION", "5"))
-MAX_ZIP_BYTES = int(os.environ.get("MAX_ZIP_MB", "200")) * 1024 * 1024
 
 # Rate limiting for /enqueue (per IP, sliding window)
 RATE_LIMIT_WINDOW = 60   # seconds
-RATE_LIMIT_MAX = int(os.environ.get("RATE_LIMIT_MAX", "10"))  # requests per window
 _rate_lock = threading.Lock()
 _rate_buckets: dict = defaultdict(deque)  # ip -> deque of timestamps
 
@@ -95,9 +94,8 @@ _UUID_RE = re.compile(
 _cleanup_stop_event = threading.Event()
 _cleanup_thread = None
 
-# Mount static files so clients can download results via HTTP
+# Only the application assets are public; downloads require job ownership.
 app = FastAPI(title="mp3-maker (dev api)")
-app.mount("/music", StaticFiles(directory=str(MUSIC_DIR)), name="music")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
@@ -118,14 +116,56 @@ class JobRequest(BaseModel):
         if len(v) > MAX_ENTRIES_PER_JOB:
             raise ValueError(f"too many entries (max {MAX_ENTRIES_PER_JOB})")
         for entry in v:
+            if not entry.strip():
+                raise ValueError("entries must not contain blank lines")
             if len(entry) > MAX_ENTRY_LENGTH:
                 raise ValueError(f"entry too long (max {MAX_ENTRY_LENGTH} chars)")
-        return v
+        return [entry.strip() for entry in v]
 
     @field_validator("concurrency")
     @classmethod
     def clamp_concurrency(cls, v: int) -> int:
         return max(1, min(v, MAX_CONCURRENCY))
+
+
+class JobCreated(BaseModel):
+    job_id: str
+
+
+class JobEntry(BaseModel):
+    entry_index: int
+    input: str | None = None
+    status: str
+    path: str | None = None
+    deleted_path: str | None = None
+    error: str | None = None
+
+
+class JobFiles(BaseModel):
+    job_id: str
+    status: Literal["queued", "processing", "done", "error"]
+    error: str | None = None
+    entries: list[JobEntry]
+
+
+class JobSummary(JobFiles):
+    updated_at: float
+
+
+class JobList(BaseModel):
+    jobs: list[JobSummary]
+
+
+class JobStatus(BaseModel):
+    job_id: str
+    status: Literal["queued", "processing", "done", "error"]
+    entries: list[str] = []
+    results: list[dict] = []
+    error: str | None = None
+
+
+class SessionInfo(BaseModel):
+    owner_id: str
 
 
 def _job_file(job_id: str, suffix: str) -> Path:
@@ -203,11 +243,6 @@ def _find_job_metadata(job_id: str):
     return None, None, None
 
 
-def _write_json(path: Path, data: dict):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-
-
 def _assert_job_owner(job_id: str, owner_id: str):
     """Ensure the requested job belongs to current session owner.
 
@@ -227,7 +262,7 @@ def _assert_job_owner(job_id: str, owner_id: str):
         # Claim legacy jobs that predate owner_id.
         data["owner_id"] = owner_id
         try:
-            _write_json(path, data)
+            write_json(path, data)
         except Exception:
             pass
         return
@@ -260,8 +295,7 @@ def _load_done_data(job_id: str) -> dict:
 
 def _write_done_data(job_id: str, data: dict):
     done_path = _job_file(job_id, ".done")
-    with open(done_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
+    write_json(done_path, data)
 
 
 def _delete_media_for_done_data(data: dict) -> int:
@@ -288,6 +322,8 @@ def _delete_job_artifacts(job_id: str, delete_media: bool = True) -> dict:
     deleted_media_files = 0
 
     done_path = _job_file(job_id, ".done")
+    if not done_path.exists():
+        done_path = _job_file(job_id, ".err")
     if delete_media and done_path.exists():
         try:
             with open(done_path, "r", encoding="utf-8") as f:
@@ -295,6 +331,12 @@ def _delete_job_artifacts(job_id: str, delete_media: bool = True) -> dict:
             deleted_media_files = _delete_media_for_done_data(done_data)
         except Exception:
             deleted_media_files = 0
+
+    # New jobs own their directory, including partial downloads from failures.
+    job_music = MUSIC_DIR / job_id
+    if delete_media and job_music.is_dir() and not job_music.is_symlink():
+        deleted_media_files += sum(1 for p in job_music.rglob("*") if p.is_file())
+        shutil.rmtree(job_music)
 
     for suffix in JOB_SUFFIXES:
         p = _job_file(job_id, suffix)
@@ -312,29 +354,57 @@ def _delete_job_artifacts(job_id: str, delete_media: bool = True) -> dict:
 
 
 def _cleanup_once() -> dict:
-    """Cleanup expired job files and old mp3 files based on TTL."""
+    """Fail stale jobs and remove expired terminal jobs, never active jobs."""
     now = time.time()
-    expired_job_ids = set()
-
-    for p in JOB_DIR.iterdir():
-        if p.suffix in JOB_SUFFIXES and (now - p.stat().st_mtime) > TTL_SECONDS:
-            expired_job_ids.add(p.stem)
-
     deleted_job_files = 0
     deleted_media_files = 0
-    for job_id in expired_job_ids:
-        stats = _delete_job_artifacts(job_id, delete_media=True)
-        deleted_job_files += stats["deleted_job_files"]
-        deleted_media_files += stats["deleted_media_files"]
-
-    # Remove stale mp3 files even if no job metadata references remain.
-    for mp3_file in MUSIC_DIR.glob("*.mp3"):
-        try:
-            if (now - mp3_file.stat().st_mtime) > TTL_SECONDS:
-                mp3_file.unlink()
-                deleted_media_files += 1
-        except Exception:
-            continue
+    expired_job_ids = set()
+    with queue_lock():
+        for p in JOB_DIR.glob("*.processing"):
+            # A crash after publishing a terminal file may leave the claim behind.
+            if p.with_suffix(".done").exists() or p.with_suffix(".err").exists():
+                p.unlink()
+                continue
+            if now - p.stat().st_mtime <= STALE_JOB_SECONDS:
+                continue
+            try:
+                with p.open(encoding="utf-8") as f:
+                    data = json.load(f)
+                data.update(status="error", error="Worker stopped responding; please resubmit the job.", completed_at=now)
+                write_json(p.with_suffix(".err"), data)
+                p.unlink()
+            except (OSError, ValueError):
+                continue
+        for p in JOB_DIR.iterdir():
+            if p.suffix not in (".done", ".err"):
+                continue
+            try:
+                with p.open(encoding="utf-8") as f:
+                    data = json.load(f)
+                completed = float(data.get("completed_at", p.stat().st_mtime))
+                if now - completed > TTL_SECONDS:
+                    expired_job_ids.add(p.stem)
+            except (OSError, ValueError, TypeError):
+                continue
+        for job_id in expired_job_ids:
+            if _job_file(job_id, ".processing").exists() or _job_file(job_id, ".json").exists():
+                continue
+            stats = _delete_job_artifacts(job_id, delete_media=True)
+            deleted_job_files += stats["deleted_job_files"]
+            deleted_media_files += stats["deleted_media_files"]
+        # Only remove orphaned job directories after every contained file is old.
+        for directory in MUSIC_DIR.iterdir():
+            if not directory.is_dir() or directory.is_symlink() or not _UUID_RE.fullmatch(directory.name):
+                continue
+            if any(_job_file(directory.name, suffix).exists() for suffix in JOB_SUFFIXES):
+                continue
+            try:
+                paths = list(directory.rglob("*"))
+                if all(now - path.stat().st_mtime > TTL_SECONDS for path in [directory, *paths]):
+                    deleted_media_files += sum(1 for path in paths if path.is_file())
+                    shutil.rmtree(directory)
+            except OSError:
+                continue
 
     return {
         "deleted_job_files": deleted_job_files,
@@ -367,7 +437,7 @@ def _stop_cleanup_thread():
         _cleanup_thread.join(timeout=2)
 
 
-@app.post("/enqueue")
+@app.post("/enqueue", response_model=JobCreated)
 def enqueue(req: JobRequest, request: Request, response: Response):
     """Enqueue a job by creating a JSON file in `jobs/`.
 
@@ -379,13 +449,6 @@ def enqueue(req: JobRequest, request: Request, response: Response):
         raise HTTPException(status_code=400, detail="entries required")
     owner_id = _get_or_create_owner_id(request, response)
 
-    active = _count_active_jobs(owner_id)
-    if active >= MAX_ACTIVE_JOBS_PER_SESSION:
-        raise HTTPException(
-            status_code=429,
-            detail=f"too many active jobs (max {MAX_ACTIVE_JOBS_PER_SESSION}) — wait for existing jobs to finish or clear them",
-        )
-
     jid = str(uuid.uuid4())
     obj = {
         "id": jid,
@@ -394,8 +457,11 @@ def enqueue(req: JobRequest, request: Request, response: Response):
         "concurrency": req.concurrency,
     }
     path = JOB_DIR / f"{jid}.json"
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False)
+    with queue_lock():
+        active = _count_active_jobs(owner_id)
+        if active >= MAX_ACTIVE_JOBS_PER_SESSION:
+            raise HTTPException(status_code=429, detail=f"too many active jobs (max {MAX_ACTIVE_JOBS_PER_SESSION}) — wait for existing jobs to finish or clear them")
+        write_json(path, obj)
     return {"job_id": jid}
 
 
@@ -408,7 +474,7 @@ def frontend_home():
     return FileResponse(index_path)
 
 
-@app.get("/whoami")
+@app.get("/whoami", response_model=SessionInfo)
 def whoami(request: Request, response: Response):
     """Return the current cookie-session owner id.
 
@@ -418,7 +484,7 @@ def whoami(request: Request, response: Response):
     return {"owner_id": owner_id}
 
 
-@app.get("/jobs")
+@app.get("/jobs", response_model=JobList)
 def list_my_jobs(request: Request, response: Response):
     """List jobs visible to the current cookie session owner."""
     owner_id = _get_or_create_owner_id(request, response)
@@ -427,25 +493,36 @@ def list_my_jobs(request: Request, response: Response):
     for p in JOB_DIR.iterdir():
         if p.suffix not in JOB_SUFFIXES:
             continue
+        try:
+            updated_at = p.stat().st_mtime
+        except FileNotFoundError:
+            continue
         job_id = p.stem
         # Keep the latest status by priority: done/err/processing/queued
         current_status = STATUS_BY_SUFFIX.get(p.suffix)
         existing = jobs.get(job_id)
         if not existing:
-            jobs[job_id] = {"job_id": job_id, "status": current_status, "updated_at": p.stat().st_mtime}
+            jobs[job_id] = {"job_id": job_id, "status": current_status, "updated_at": updated_at}
         else:
             # Prefer terminal states in priority order
             priority = {"done": 4, "error": 3, "processing": 2, "queued": 1}
             if priority.get(current_status, 0) >= priority.get(existing["status"], 0):
                 existing["status"] = current_status
-            existing["updated_at"] = max(existing["updated_at"], p.stat().st_mtime)
+            existing["updated_at"] = max(existing["updated_at"], updated_at)
 
     visible = []
     for item in jobs.values():
         job_id = item["job_id"]
         try:
-            _assert_job_owner(job_id, owner_id)
-            visible.append(item)
+            with queue_lock():
+                _assert_job_owner(job_id, owner_id)
+                path, suffix, data = _find_job_metadata(job_id)
+                if not path or not isinstance(data, dict):
+                    continue
+                status = STATUS_BY_SUFFIX[suffix]
+                item.update(status=status, updated_at=path.stat().st_mtime,
+                            error=data.get("error"), entries=job_entries(data, status))
+                visible.append(item)
         except HTTPException:
             continue
 
@@ -453,7 +530,7 @@ def list_my_jobs(request: Request, response: Response):
     return {"jobs": visible}
 
 
-@app.get("/jobs/{job_id}")
+@app.get("/jobs/{job_id}", response_model=JobStatus)
 def job_status(job_id: str, request: Request, response: Response):
     """Return a simple status for a job ID based on presence of files.
 
@@ -463,30 +540,17 @@ def job_status(job_id: str, request: Request, response: Response):
     """
     _validate_job_id(job_id)
     owner_id = _get_or_create_owner_id(request, response)
-    _assert_job_owner(job_id, owner_id)
-    base = JOB_DIR / f"{job_id}"
-    if (base.with_suffix('.done')).exists():
-        try:
-            with open(base.with_suffix('.done'), 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            data = {"status": "done"}
-        return data
-    if (base.with_suffix('.err')).exists():
-        try:
-            with open(base.with_suffix('.err'), 'r', encoding='utf-8') as f:
-                data = json.load(f)
-        except Exception:
-            data = {"status": "error"}
-        return data
-    if (base.with_suffix('.processing')).exists():
-        return {"status": "processing"}
-    if (base.with_suffix('.json')).exists():
-        return {"status": "queued"}
-    raise HTTPException(status_code=404, detail="job not found")
+    with queue_lock():
+        _assert_job_owner(job_id, owner_id)
+        _, suffix, data = _find_job_metadata(job_id)
+        if not suffix or not isinstance(data, dict):
+            raise HTTPException(status_code=404, detail="job not found")
+        return {"job_id": job_id, "status": STATUS_BY_SUFFIX[suffix],
+                "entries": data.get("entries", []), "results": data.get("results", []),
+                "error": data.get("error")}
 
 
-@app.get("/jobs/{job_id}/files")
+@app.get("/jobs/{job_id}/files", response_model=JobFiles)
 def list_job_files(job_id: str, request: Request, response: Response):
     """List job result entries with stable indexes for frontend actions.
 
@@ -518,43 +582,31 @@ def list_job_files(job_id: str, request: Request, response: Response):
     else:
         raise HTTPException(status_code=404, detail="job not found")
 
-    results = data.get("results", [])
-
-    entries = []
-    if results:
-        for idx, item in enumerate(results):
-            entries.append(
-                {
-                    "entry_index": idx,
-                    "input": item.get("input"),
-                    "status": item.get("status"),
-                    "path": item.get("path"),
-                    "deleted_path": item.get("deleted_path"),
-                    "error": item.get("error"),
-                }
-            )
-    else:
-        # For queued/processing (and some error cases), show planned entries
-        # immediately so the UI can render the job's song list right away.
-        planned_entries = data.get("entries", []) if isinstance(data, dict) else []
-        for idx, item in enumerate(planned_entries):
-            entries.append(
-                {
-                    "entry_index": idx,
-                    "input": item,
-                    "status": status,
-                    "path": None,
-                    "deleted_path": None,
-                    "error": data.get("error") if status == "error" else None,
-                }
-            )
-
     return {
         "job_id": job_id,
         "status": status,
         "error": data.get("error"),
-        "entries": entries,
+        "entries": job_entries(data, status),
     }
+
+
+@app.get("/jobs/{job_id}/files/{entry_index}/download")
+def download_job_file(job_id: str, entry_index: int, request: Request, response: Response):
+    """Download a completed entry only for the session that owns its job."""
+    data = list_job_files(job_id, request, response)
+    entries = data["entries"]
+    if entry_index < 0 or entry_index >= len(entries):
+        raise HTTPException(status_code=404, detail="file not found")
+    entry = entries[entry_index]
+    if entry.get("status") != "ok" or not entry.get("path"):
+        raise HTTPException(status_code=404, detail="file not found")
+    try:
+        path = _resolve_music_path(entry["path"])
+        if not path.is_file():
+            raise ValueError("file not found")
+    except (OSError, ValueError):
+        raise HTTPException(status_code=404, detail="file not found")
+    return FileResponse(path, media_type="audio/mpeg", filename=path.name)
 
 
 @app.delete("/jobs/{job_id}")
@@ -562,8 +614,11 @@ def delete_job(job_id: str, request: Request, response: Response):
     """Clear a job and delete all associated MP3 files."""
     _validate_job_id(job_id)
     owner_id = _get_or_create_owner_id(request, response)
-    _assert_job_owner(job_id, owner_id)
-    stats = _delete_job_artifacts(job_id, delete_media=True)
+    with queue_lock():
+        _assert_job_owner(job_id, owner_id)
+        if _job_file(job_id, ".processing").exists():
+            raise HTTPException(status_code=409, detail="cannot delete a processing job; wait for it to finish")
+        stats = _delete_job_artifacts(job_id, delete_media=True)
     if stats["deleted_job_files"] == 0:
         raise HTTPException(status_code=404, detail="job not found")
     return {"status": "deleted", "job_id": job_id, **stats}
@@ -655,8 +710,15 @@ def download_all(job_id: str, request: Request, response: Response):
 
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        used_names = set()
         for media_path in files_to_zip:
-            zf.write(media_path, arcname=media_path.name)
+            name = media_path.name
+            counter = 2
+            while name in used_names:
+                name = f"{media_path.stem} ({counter}){media_path.suffix}"
+                counter += 1
+            used_names.add(name)
+            zf.write(media_path, arcname=name)
     zip_buffer.seek(0)
 
     headers = {"Content-Disposition": f'attachment; filename="{job_id}.zip"'}

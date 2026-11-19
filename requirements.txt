@@ -1,9 +1,5 @@
-# === Step 1: YouTube to MP3 ===
-# yt-dlp — downloads videos from YouTube (and many other sites)
-# It also handles the ffmpeg conversion to MP3 for us
-yt-dlp>=2024.1.0
-
-# API (quick, file-queue option)
-fastapi>=0.100.0
-uvicorn[standard]>=0.22.0
-pydantic>=2.0.0
+# Direct dependencies tested together. Update yt-dlp when site changes require it.
+yt-dlp==2026.10.26
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+pydantic==2.14.3

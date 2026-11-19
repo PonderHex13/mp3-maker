@@ -15,12 +15,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy project files
 COPY . /app
 
-# Ensure runtime directories exist inside the image (data will be ephemeral)
-RUN mkdir -p /app/jobs /app/music /app/output
-
-# Copy and enable entrypoint for single-container mode
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Run application processes as an unprivileged user.
+RUN useradd --create-home --uid 10001 app \
+ && mkdir -p /app/jobs /app/music /app/output \
+ && chown -R app:app /app \
+ && chmod +x /app/entrypoint.sh
+USER app
 
 EXPOSE 8000
 

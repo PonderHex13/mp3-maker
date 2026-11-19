@@ -1,14 +1,10 @@
 """
 mp3_maker.py — Core MP3 converter module
 
-This file grows step by step. Each step adds a new feature.
-Steps completed:
-  Step 1: Download a YouTube video and convert it to MP3
-  Step 2: Download a Spotify track and convert it to MP3
+Downloads YouTube audio and converts it to MP3. Spotify URLs are not supported.
 
 Usage:
   python mp3_maker.py --url "https://www.youtube.com/watch?v=VIDEO_ID"
-  python mp3_maker.py --url "https://open.spotify.com/track/TRACK_ID"
   python mp3_maker.py --url "https://youtu.be/VIDEO_ID" --output ./my-music
 """
 
@@ -23,19 +19,13 @@ import os
 # (the --url and --output flags you type after 'python mp3_maker.py')
 import argparse
 
-# 'subprocess' lets us run external commands (like spotdl) from Python
-import subprocess
-
-# allow clean process exit when encountering unsupported URLs
-import sys
-
-# 'glob' helps us find files matching a pattern (e.g. all .mp3 files)
-import glob
+import uuid
+from urllib.parse import urlsplit
 
 # 'yt_dlp' is the YouTube downloader library
 # It can download video/audio from YouTube and hundreds of other sites
 import yt_dlp
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 
 # ============================================================================
@@ -81,21 +71,26 @@ def detect_url_type(url: str) -> str:
     Returns:
         'youtube', 'spotify', or 'unknown'
     """
-    # Convert to lowercase for consistent matching
-    lower = url.lower().strip()
+    try:
+        parsed = urlsplit(url.strip())
+        if parsed.scheme.lower() not in ("http", "https"):
+            return "unknown"
+        host = (parsed.hostname or "").lower().rstrip(".")
+    except ValueError:
+        return "unknown"
 
     # YouTube URLs come in several forms:
     #   https://www.youtube.com/watch?v=...
     #   https://youtu.be/...
     #   https://music.youtube.com/watch?v=...
-    if any(domain in lower for domain in ["youtube.com", "youtu.be"]):
+    if host == "youtube.com" or host.endswith(".youtube.com") or host == "youtu.be":
         return "youtube"
 
     # Spotify URLs look like:
     #   https://open.spotify.com/track/...
     #   https://open.spotify.com/album/...
     #   https://open.spotify.com/playlist/...
-    if "spotify.com" in lower:
+    if host == "spotify.com" or host.endswith(".spotify.com"):
         return "spotify"
 
     return "unknown"
@@ -130,6 +125,8 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
     # os.makedirs with exist_ok=True won't error if the folder already exists
     os.makedirs(output_dir, exist_ok=True)
 
+    # Give every invocation its own output name, even for the same video.
+    download_id = uuid.uuid4().hex
     # This variable will hold the final filename after download
     # We use a list (mutable) so the hook function below can modify it
     downloaded_file = [None]
@@ -171,16 +168,15 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
                 # Fallback: look inside the nested 'info_dict'
                 inner = info.get("info_dict", {})
                 filepath = inner.get("filepath")
-            if filepath:
+            if filepath and str(filepath).lower().endswith(".mp3"):
                 downloaded_file[0] = filepath
 
     # yt-dlp configuration options
     # This tells yt-dlp WHAT to download and HOW to process it
     ydl_options = {
         # --- Output template ---
-        # '%(title)s' = video title, '%(ext)s' = file extension
-        # This creates files like: output/My Song Title.mp3
-        "outtmpl": os.path.join(output_dir, "%(title)s.%(ext)s"),
+        # Include a unique ID to avoid collisions between concurrent downloads.
+        "outtmpl": os.path.join(output_dir, f"%(title)s [{download_id}].%(ext)s"),
 
         # --- Audio extraction ---
         # 'format': pick the best audio-only stream (no video = smaller download)
@@ -223,23 +219,17 @@ def download_youtube_as_mp3(url: str, output_dir: str = "output") -> str:
     # 'with' statement ensures cleanup happens even if there's an error
     print(f"Starting download: {url}")
     with yt_dlp.YoutubeDL(ydl_options) as ydl:
-        ydl.download([url])
+        info = ydl.extract_info(url, download=True)
+        expected_file = None
+        if isinstance(info, dict):
+            expected_file = os.path.splitext(ydl.prepare_filename(info))[0] + ".mp3"
 
     # Check that we got a file
-    if downloaded_file[0] and os.path.exists(downloaded_file[0]):
-        file_size_mb = os.path.getsize(downloaded_file[0]) / (1024 * 1024)
-        print(f"  Saved: {downloaded_file[0]} ({file_size_mb:.1f} MB)")
-        return downloaded_file[0]
-
-    # Fallback: the hook didn't capture the path, but the file may still exist.
-    # Scan the output directory for the newest .mp3 file created in this run.
-    mp3_files = glob.glob(os.path.join(output_dir, "*.mp3"))
-    if mp3_files:
-        # Pick the most recently modified .mp3 file
-        newest = max(mp3_files, key=os.path.getmtime)
-        file_size_mb = os.path.getsize(newest) / (1024 * 1024)
-        print(f"  Saved: {newest} ({file_size_mb:.1f} MB)")
-        return newest
+    for path in (downloaded_file[0], expected_file):
+        if path and os.path.isfile(path):
+            file_size_mb = os.path.getsize(path) / (1024 * 1024)
+            print(f"  Saved: {path} ({file_size_mb:.1f} MB)")
+            return path
 
     raise FileNotFoundError(
         "Download seemed to succeed but the output MP3 file was not found. "
@@ -288,6 +278,31 @@ def download_title_as_mp3(name: str, author: str, output_dir: str = "output") ->
 
     # Reuse the existing download function for consistent behaviour
     return download_youtube_as_mp3(video_url, output_dir)
+def process_entry(entry_line: str, output_dir: str = "output") -> dict:
+    """Parse and download one entry, returning a success or error result."""
+    entry_line = str(entry_line).strip()
+    result = {"input": entry_line}
+    try:
+        if not entry_line or entry_line.startswith("#"):
+            raise ValueError("empty or comment")
+        if entry_line.lower().startswith(("http://", "https://")):
+            path = download_link_as_mp3(entry_line, output_dir)
+        else:
+            for separator in (" - ", "|", ","):
+                if separator in entry_line:
+                    author, name = (part.strip() for part in entry_line.split(separator, 1))
+                    if not author or not name:
+                        raise ValueError("Artist and title must both be provided")
+                    path = download_title_as_mp3(name=name, author=author, output_dir=output_dir)
+                    break
+            else:
+                raise ValueError("Entry is not a URL or 'Author - Title' format (strict batch mode)")
+        result.update(status="ok", path=path)
+    except Exception as exc:
+        result.update(status="error", error=str(exc))
+    return result
+
+
 def process_batch_entries(entries: list, output_dir: str = "output", concurrency: int = 4) -> list:
     """
     Process inline batch entries (list of strings) in parallel (strict mode):
@@ -308,65 +323,9 @@ def process_batch_entries(entries: list, output_dir: str = "output", concurrency
         else:
             lines.append(raw)
 
-    def process_single_line(entry_line: str) -> dict:
-        entry_line = entry_line.strip()
-        res = {"input": entry_line}
-        if not entry_line or entry_line.startswith("#"):
-            res.update({"status": "error", "error": "empty or comment"})
-            return res
-
-        print(f"\nProcessing: {entry_line}")
-
-        try:
-            # URL entry (or recognizable URL-type)
-            if entry_line.lower().startswith("http") or detect_url_type(entry_line) != "unknown":
-                url_type = detect_url_type(entry_line)
-                if url_type == "spotify":
-                    raise FileNotFoundError("Spotify URLs are not supported in this branch")
-                if url_type == "unknown":
-                    raise FileNotFoundError("Unknown URL type")
-
-                path = download_link_as_mp3(entry_line, output_dir)
-                res.update({"status": "ok", "path": path})
-
-            else:
-                # Try common separators assuming "Author - Title"
-                parsed = None
-                for sep in [" - ", "|", ","]:
-                    if sep in entry_line:
-                        parts2 = [p.strip() for p in entry_line.split(sep, 1)]
-                        if len(parts2) == 2:
-                            author, name = parts2[0], parts2[1]
-                            parsed = (name, author)
-                            break
-
-                if parsed:
-                    name, author = parsed
-                    path = download_title_as_mp3(name=name, author=author, output_dir=output_dir)
-                    res.update({"status": "ok", "path": path})
-                else:
-                    raise ValueError("Entry is not a URL or 'Author - Title' format (strict batch mode)")
-
-        except Exception as e:
-            print(f"  Error processing entry: {e}")
-            res.update({"status": "error", "error": str(e)})
-
-        return res
-
-    results = []
-    # Run workers in a thread pool
     max_workers = max(1, concurrency)
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futures = {ex.submit(process_single_line, ln): ln for ln in lines}
-        for fut in as_completed(futures):
-            try:
-                res = fut.result()
-            except Exception as e:
-                ln = futures.get(fut)
-                res = {"input": ln, "status": "error", "error": str(e)}
-            results.append(res)
-
-    return results
+        return list(ex.map(lambda line: process_entry(line, output_dir), lines))
 
 # ============================================================================
 # SMART DOWNLOAD — picks the right function based on URL
@@ -376,11 +335,10 @@ def download_link_as_mp3(url: str, output_dir: str = "output") -> str:
     """
     Download from any supported URL and convert to MP3.
 
-    Automatically detects if the URL is YouTube or Spotify
-    and calls the appropriate download function.
+    Downloads supported YouTube URLs and rejects unsupported sources.
 
     Args:
-        url:        YouTube or Spotify URL
+        url:        YouTube URL
         output_dir: Folder where MP3s will be saved
 
     Returns:
@@ -391,13 +349,9 @@ def download_link_as_mp3(url: str, output_dir: str = "output") -> str:
     if url_type == "youtube":
         return download_youtube_as_mp3(url, output_dir)
     elif url_type == "spotify":
-        # Currently not supported URLs — exit with non-zero code so callers know
-        print("  Detected Spotify URL. Currently not supported. Exiting...")
-        sys.exit(1)
+        raise ValueError("Spotify URLs are not supported")
     else:
-        # Unknown/unsupported URLs — exit with non-zero code so callers know
-        print("  Unknown or unsupported URL type. Exiting...")
-        sys.exit(1)
+        raise ValueError("Unknown or unsupported URL type")
 
 
 # ============================================================================
@@ -423,7 +377,6 @@ def main():
         epilog="""
 Examples:
   python mp3_maker.py --url "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-  python mp3_maker.py --url "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
   python mp3_maker.py --url "https://youtu.be/dQw4w9WgXcQ" --output ./music
         """,
     )
@@ -433,7 +386,7 @@ Examples:
         "--url",
         type=str,
         required=False,
-        help="YouTube or Spotify URL to download and convert to MP3",
+        help="YouTube URL to download and convert to MP3",
     )
     parser.add_argument(
         "--name",
@@ -509,7 +462,6 @@ Examples:
         print("  - Is the URL correct and the video/track available?")
         print("  - Is ffmpeg installed? Run: ffmpeg -version")
         print("  - Is yt-dlp up to date? Run: pip install --upgrade yt-dlp")
-        print("  - For Spotify: is spotdl installed? Run: pip install spotdl")
         # Exit with error code 1 (non-zero = something went wrong)
         exit(1)
 

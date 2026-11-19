@@ -4,7 +4,7 @@ worker.py — Simple file-queue worker for local testing
 This worker watches the `jobs/` directory for JSON job files created by
 `api.py`. It's deliberately small and dependency-free: the worker claims
 jobs by renaming `<id>.json` -> `<id>.processing`, runs the job using the
-imported `process_batch_entries` from `mp3_maker`, and then writes a
+imported `process_entry` from `mp3_maker`, and then writes a
 `.done` or `.err` file containing results or error information.
 
 This pattern is easy to run locally and understand. For production use
@@ -20,7 +20,9 @@ from pathlib import Path
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
-from mp3_maker import detect_url_type, download_link_as_mp3, download_title_as_mp3
+from mp3_maker import process_entry
+from job_store import queue_lock, write_json
+from settings import STALE_JOB_SECONDS
 
 
 # Where API writes job requests
@@ -49,7 +51,7 @@ def run_worker(poll_interval: float = 1.0):
 
     - Polls for `*.json` files in `jobs/`.
     - Renames a job to `*.processing` to claim it.
-    - Calls `process_batch_entries(entries, output_dir, concurrency)`.
+    - Calls `process_entry` for each item with bounded concurrency.
     - Writes `*.done` with results or `*.err` with error details.
     """
     print("worker: watching jobs/ directory")
@@ -59,8 +61,11 @@ def run_worker(poll_interval: float = 1.0):
             for p in files:
                 processing = p.with_suffix('.processing')
                 # claim the job by renaming; if claim fails another worker got it
-                if not safe_rename(p, processing):
-                    continue
+                with queue_lock():
+                    if not safe_rename(p, processing):
+                        continue
+                    # The claim time, rather than the queued file's age, starts the lease.
+                    os.utime(processing, None)
                 jid = processing.stem
                 try:
                     with open(processing, 'r', encoding='utf-8') as f:
@@ -78,57 +83,16 @@ def run_worker(poll_interval: float = 1.0):
                     ]
 
                     def write_processing_snapshot():
-                        with open(processing, 'w', encoding='utf-8') as f:
-                            json.dump(
-                                {
+                        with queue_lock():
+                            if not processing.exists():
+                                raise RuntimeError("job lease expired")
+                            write_json(processing, {
                                     "status": "processing",
                                     "job_id": jid,
                                     "owner_id": owner_id,
                                     "entries": entries,
                                     "results": results,
-                                },
-                                f,
-                                ensure_ascii=False,
-                            )
-
-                    def process_single_line(entry_line: str) -> dict:
-                        entry_line = str(entry_line).strip()
-                        res = {"input": entry_line}
-
-                        if not entry_line or entry_line.startswith("#"):
-                            res.update({"status": "error", "error": "empty or comment"})
-                            return res
-
-                        try:
-                            if entry_line.lower().startswith("http") or detect_url_type(entry_line) != "unknown":
-                                url_type = detect_url_type(entry_line)
-                                if url_type == "spotify":
-                                    raise FileNotFoundError("Spotify URLs are not supported in this branch")
-                                if url_type == "unknown":
-                                    raise FileNotFoundError("Unknown URL type")
-
-                                path = download_link_as_mp3(entry_line, str(OUT_DIR))
-                                res.update({"status": "ok", "path": path})
-                            else:
-                                parsed = None
-                                for sep in [" - ", "|", ","]:
-                                    if sep in entry_line:
-                                        parts2 = [p.strip() for p in entry_line.split(sep, 1)]
-                                        if len(parts2) == 2:
-                                            author, name = parts2[0], parts2[1]
-                                            parsed = (name, author)
-                                            break
-
-                                if parsed:
-                                    name, author = parsed
-                                    path = download_title_as_mp3(name=name, author=author, output_dir=str(OUT_DIR))
-                                    res.update({"status": "ok", "path": path})
-                                else:
-                                    raise ValueError("Entry is not a URL or 'Author - Title' format (strict batch mode)")
-                        except Exception as e:
-                            res.update({"status": "error", "error": str(e)})
-
-                        return res
+                                })
 
                     max_workers = max(1, concurrency)
                     pending = deque(range(len(entries)))
@@ -139,13 +103,13 @@ def run_worker(poll_interval: float = 1.0):
                         for _ in range(min(max_workers, len(entries))):
                             idx = pending.popleft()
                             results[idx]["status"] = "processing"
-                            future = ex.submit(process_single_line, entries[idx])
+                            future = ex.submit(process_entry, entries[idx], str(OUT_DIR / jid / str(idx)))
                             running[future] = idx
 
                         write_processing_snapshot()
 
                         while running:
-                            done, _ = wait(running.keys(), return_when=FIRST_COMPLETED)
+                            done, _ = wait(running.keys(), timeout=min(30, STALE_JOB_SECONDS / 3), return_when=FIRST_COMPLETED)
                             for future in done:
                                 idx = running.pop(future)
                                 try:
@@ -160,19 +124,18 @@ def run_worker(poll_interval: float = 1.0):
                                 if pending:
                                     next_idx = pending.popleft()
                                     results[next_idx]["status"] = "processing"
-                                    next_future = ex.submit(process_single_line, entries[next_idx])
+                                    next_future = ex.submit(process_entry, entries[next_idx], str(OUT_DIR / jid / str(next_idx)))
                                     running[next_future] = next_idx
 
                             write_processing_snapshot()
 
                     done_path = processing.with_suffix('.done')
-                    with open(done_path, 'w', encoding='utf-8') as f:
-                        json.dump({"status": "done", "job_id": jid, "owner_id": owner_id, "entries": entries, "results": results}, f, ensure_ascii=False)
-                    print(f"worker: finished job {jid}")
-                    try:
+                    with queue_lock():
+                        if not processing.exists():
+                            raise RuntimeError("job lease expired")
+                        write_json(done_path, {"status": "done", "job_id": jid, "owner_id": owner_id, "entries": entries, "results": results, "completed_at": time.time()})
                         processing.unlink()
-                    except Exception:
-                        pass
+                    print(f"worker: finished job {jid}")
                 except Exception as e:
                     err_path = processing.with_suffix('.err')
                     tb = traceback.format_exc()
@@ -185,13 +148,11 @@ def run_worker(poll_interval: float = 1.0):
                             entries = raw.get('entries', [])
                     except Exception:
                         pass
-                    with open(err_path, 'w', encoding='utf-8') as f:
-                        json.dump({"status": "error", "job_id": jid, "owner_id": owner_id, "entries": entries, "error": str(e), "traceback": tb}, f, ensure_ascii=False)
+                    with queue_lock():
+                        if processing.exists():
+                            write_json(err_path, {"status": "error", "job_id": jid, "owner_id": owner_id, "entries": entries, "error": str(e), "traceback": tb, "completed_at": time.time()})
+                            processing.unlink()
                     print(f"worker: job {jid} failed: {e}")
-                    try:
-                        processing.unlink()
-                    except Exception:
-                        pass
         except Exception:
             print(traceback.format_exc())
         time.sleep(poll_interval)

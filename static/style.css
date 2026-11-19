@@ -98,7 +98,7 @@ textarea:focus {
   font-size: 13px;
 }
 
-button {
+button, .button {
   border: 1px solid transparent;
   border-radius: 999px;
   background: var(--accent);
@@ -110,18 +110,25 @@ button {
   transition: transform 120ms ease, filter 120ms ease;
 }
 
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 #submitBtn {
   padding: 11px 20px;
   font-size: 15px;
   font-weight: 700;
 }
 
-button:hover {
+button:hover, .button:hover {
   transform: translateY(-1px);
   filter: brightness(1.08);
 }
 
-button.secondary {
+button.secondary, .button.secondary {
   background: #3f4859;
 }
 
@@ -249,7 +256,7 @@ button:disabled {
   justify-content: flex-end;
 }
 
-.file-actions-right button {
+.file-actions-right button, .file-actions-right .button {
   height: var(--control-h);
 }
 
