@@ -3,8 +3,9 @@ output/
 jobs/
 music/
 
-# Bundled ffmpeg binaries (large, don't commit)
-ffmpeg/
+# Keep the folder, but don't commit local FFmpeg binaries.
+ffmpeg/*
+!ffmpeg/.gitkeep
 
 # Python virtual environment
 venv/

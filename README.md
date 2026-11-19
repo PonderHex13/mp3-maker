@@ -9,7 +9,7 @@ New MP3 filenames and artist/title tags use the matched video's track metadata w
 
 ## Running locally (no Docker)
 
-**Requirements:** Python 3.11+, ffmpeg on PATH
+**Requirements:** Python 3.11+ and FFmpeg installed on `PATH` or placed in the project's `ffmpeg/` folder.
 
 ```bash
 git clone git@gitlab.com:ponderhex13/mp3-maker.git
@@ -35,7 +35,7 @@ failed and can be resubmitted. Queued jobs remain until processed or deleted.
 API and worker processes must share a jobs filesystem that supports file locking
 and atomic renames.
 
-> **FFmpeg:** yt-dlp uses FFmpeg to convert downloaded audio into MP3; `ffprobe` identifies the downloaded audio format. Install via `winget install ffmpeg` (Windows), `sudo apt install ffmpeg` (Debian/Ubuntu), or `brew install ffmpeg` (Mac). Both `ffmpeg` and `ffprobe` must be available on `PATH`. Alternatively, place both executables directly in the project's `ffmpeg/` folder: `ffmpeg.exe` and `ffprobe.exe` on Windows, or `ffmpeg` and `ffprobe` on Linux/macOS. The app checks this folder first. Docker installs FFmpeg inside the image, so it does not need the local binaries.
+> **FFmpeg:** yt-dlp uses FFmpeg to convert downloaded audio into MP3; `ffprobe` identifies the downloaded audio format. Install via `winget install ffmpeg` (Windows), `sudo apt install ffmpeg` (Debian/Ubuntu), or `brew install ffmpeg` (Mac). Both `ffmpeg` and `ffprobe` must be available on `PATH`. Alternatively, place both executables directly in the project's `ffmpeg/` folder: `ffmpeg.exe` and `ffprobe.exe` on Windows, or `ffmpeg` and `ffprobe` on Linux/macOS. The app checks this folder first. The folder's `.gitkeep` file keeps it in the repository; local binaries inside it are ignored by Git. Docker installs FFmpeg inside the image, so it does not need the local binaries.
 
 ---
 
@@ -177,6 +177,7 @@ mp3-maker/
 ├── requirements.txt
 ├── requirements-test.txt
 ├── tests/              # Unit and API/worker integration tests
+├── ffmpeg/             # Optional local FFmpeg executables (not committed)
 ├── static/             # Browser UI (HTML, CSS, JS)
 ├── music/              # Downloaded MP3s (git-ignored, ephemeral in container)
 ├── jobs/               # Job state files (git-ignored, ephemeral in container)
