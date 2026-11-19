@@ -7,6 +7,8 @@ const entryCount = document.getElementById("entryCount");
 const refreshBtn = document.getElementById("refreshBtn");
 const clearHistoryBtn = document.getElementById("clearHistoryBtn");
 const historyInfo = document.getElementById("historyInfo");
+const clearHistoryDialog = document.getElementById("clearHistoryDialog");
+const clearHistoryMessage = document.getElementById("clearHistoryMessage");
 
 const REFRESH_MS = 3000;
 const IDLE_REFRESH_MS = 30000;
@@ -219,13 +221,22 @@ async function clearHistory() {
   if (isClearingHistory) return;
   const removable = currentJobs.filter((job) => job.status !== "processing");
   if (!removable.length) return;
-  const processing = currentJobs.length - removable.length;
-  const message = `Clear ${removable.length} ${removable.length === 1 ? "job" : "jobs"} and delete their downloaded files?` +
-    (processing ? " Jobs currently processing will be kept." : "");
-  if (!confirm(message)) return;
-
   isClearingHistory = true;
   clearHistoryBtn.disabled = true;
+  const processing = currentJobs.length - removable.length;
+  clearHistoryMessage.textContent = `Remove ${removable.length} ${removable.length === 1 ? "job" : "jobs"} and delete their files from the server? Files already saved on your device will not be affected.` +
+    (processing ? " Jobs currently processing will be kept." : "");
+  clearHistoryDialog.returnValue = "cancel";
+  const confirmed = new Promise((resolve) => {
+    clearHistoryDialog.addEventListener("close", () => resolve(clearHistoryDialog.returnValue === "confirm"), { once: true });
+  });
+  clearHistoryDialog.showModal();
+  if (!await confirmed) {
+    isClearingHistory = false;
+    clearHistoryBtn.disabled = !currentJobs.some((job) => job.status !== "processing");
+    return;
+  }
+
   historyInfo.textContent = "Clearing history...";
   try {
     const results = await Promise.allSettled(removable.map((job) =>

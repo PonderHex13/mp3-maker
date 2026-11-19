@@ -42,6 +42,17 @@ The Beatles - Help"></textarea>
     </section>
   </main>
 
+  <dialog id="clearHistoryDialog" class="confirm-dialog" aria-labelledby="clearHistoryTitle" aria-describedby="clearHistoryMessage">
+    <form method="dialog">
+      <h2 id="clearHistoryTitle">Remove all jobs?</h2>
+      <p id="clearHistoryMessage"></p>
+      <div class="confirm-actions">
+        <button class="secondary" type="submit" value="cancel">Cancel</button>
+        <button class="danger" type="submit" value="confirm">Remove All</button>
+      </div>
+    </form>
+  </dialog>
+
   <script src="/static/app.js"></script>
 </body>
 </html>
